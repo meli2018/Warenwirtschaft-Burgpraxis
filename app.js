@@ -50,3 +50,36 @@ async function cloudPush(){try{if(!confirm('Cloud-Daten mit dem aktuellen lokale
 try{session=JSON.parse(sessionStorage.getItem('wp-session')||'null')}catch{};
 if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
 render();
+
+
+document.addEventListener('click', function(e) {
+  const b = e.target.closest('button');
+  if (!b || b.textContent.trim() !== 'Artikel speichern') return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+
+  const d = document.getElementById('dialogContent');
+  const get = n => d.querySelector('[name="' + n + '"]')?.value || '';
+  if (!get('name').trim()) {
+    alert('Bitte Artikelname eingeben');
+    return;
+  }
+
+  const old = db.products.find(p => p.id === get('id'));
+  const custom = {};
+  db.fields.forEach(f => custom[f.id] = get('custom_' + f.id));
+  const data = {
+    id: old?.id || id(),
+    name: get('name').trim(),
+    sku: get('sku'),
+    barcode: get('barcode'),
+    category: get('category'),
+    price: Number(get('price')) || 0,
+    custom: custom
+  };
+
+  if (old) Object.assign(old, data);
+  else db.products.push(data);
+  close();
+  save();
+}, true);
