@@ -83,3 +83,29 @@ document.addEventListener('click', function(e) {
   close();
   save();
 }, true);
+
+const originalProductModal = productModal;
+
+productModal = function(p) {
+  originalProductModal(p);
+
+  const dialog = document.getElementById('dialogContent');
+  const form = dialog.querySelector('#productForm');
+  if (!form) return;
+
+  for (const name of ['sku', 'barcode']) {
+    const input = form.querySelector(`[name="${name}"]`);
+    if (input) {
+      const wrapper = input.closest('label');
+      if (wrapper) wrapper.style.display = 'none';
+      else input.style.display = 'none';
+    }
+  }
+
+  dialog.querySelectorAll('button').forEach(button => {
+    if (button.textContent.includes('Barcode scannen')) {
+      button.style.display = 'none';
+    }
+  });
+};
+  
