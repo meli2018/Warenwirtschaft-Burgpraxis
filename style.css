@@ -3,4 +3,4 @@
 #productForm label:has(input[name="barcode"]),
 #productForm button[data-action="scan"] {
   display: none !important;
-}header {background: #526F91 !important;
+}header {background: #526F91 !important;}
