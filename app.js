@@ -108,4 +108,29 @@ productModal = function(p) {
     }
   });
 };
-  
+  const bisherigesArtikelFenster = productModal;
+
+productModal = function(p) {
+  bisherigesArtikelFenster(p);
+
+  const feld = [...document.querySelectorAll('#productForm input')]
+    .find(x => x.closest('label')?.textContent.trim() === 'Kaufjahr');
+
+  if (!feld) return;
+
+  const auswahl = document.createElement('select');
+  auswahl.name = feld.name;
+
+  const aktuell = new Date().getFullYear();
+  const wert = feld.value || String(aktuell);
+
+  for (let jahr = 2024; jahr <= Math.max(aktuell + 5, Number(wert)); jahr++) {
+    const option = document.createElement('option');
+    option.value = String(jahr);
+    option.textContent = String(jahr);
+    option.selected = String(jahr) === wert;
+    auswahl.appendChild(option);
+  }
+
+  feld.replaceWith(auswahl);
+};
