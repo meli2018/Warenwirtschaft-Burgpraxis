@@ -9,6 +9,8 @@ nav button.secondary,
 nav button.active {
   color: white !important;
 }
-#nav button {
-  color: white !important;
+nav button,
+nav button.secondary,
+nav button.active {
+  color: #ffffff !important;
 }
