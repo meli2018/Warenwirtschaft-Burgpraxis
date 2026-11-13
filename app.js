@@ -134,3 +134,19 @@ productModal = function(p) {
 
   feld.replaceWith(auswahl);
 };
+const bisherigesPreisFenster = productModal;
+
+productModal = function(p) {
+  bisherigesPreisFenster(p);
+
+  const formular = document.getElementById('productForm');
+  const preis = formular?.querySelector('[name="price"]');
+  const beschriftung = preis?.closest('label');
+
+  if (beschriftung) {
+    const text = [...beschriftung.childNodes].find(
+      n => n.nodeType === 3 && n.textContent.includes('Einzelpreis')
+    );
+    if (text) text.textContent = text.textContent.replace('Einzelpreis', 'Gesamtpreis');
+  }
+};
