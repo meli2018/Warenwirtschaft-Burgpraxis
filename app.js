@@ -15,7 +15,7 @@ const sel=(name,label,opts,chosen='')=>`<label>${esc(label)}<select name="${esc(
 const opt=a=>a.map(x=>({value:x.id,label:x.name}));
 function formData(form){return Object.fromEntries(new FormData(form).entries())}
 function button(text,act,cl='secondary'){return `<button class="${cl}" data-action="${act}">${text}</button>`}
-const headings={dashboard:'Übersicht',products:'Artikel',warehouses:'Lagerorte',movements:'Buchungen',inventory:'Inventur',reports:'Auswertungen',designer:'Gestalten',settings:'Einstellungen'};
+const headings={dashboard:'Übersicht',products:'Artikel',movements:'Buchungen',inventory:'Inventur',reports:'Auswertungen',designer:'Gestalten',settings:'Einstellungen'};
 function render(){document.getElementById('nav').innerHTML=Object.entries(headings).map(([k,v])=>`<button data-page="${k}" class="${page===k?'active':''}">${v}</button>`).join('');document.getElementById('app').innerHTML=pages[page]();}
 const pages={
  dashboard(){let value=db.products.reduce((s,p)=>s+qty(p.id)*Number(p.price||0),0);return `<div class="toolbar"><h1>Übersicht</h1>${button('+ Neuer Artikel','new-product','')}</div><div class="grid">${[['Artikel',db.products.length],['Lagerorte',db.warehouses.length],['Gesamtbestand',db.products.reduce((s,p)=>s+qty(p.id),0)],['Warenwert',money(value)]].map(([l,v])=>`<div class="card"><div class="muted">${l}</div><div class="metric">${esc(v)}</div></div>`).join('')}</div><div class="card"><h2>Schnellzugriff</h2><div class="actions">${button('Wareneingang','new-movement','')}${button('Warenausgang','new-movement')}${button('Inventur','inventory-page')}${button('Daten exportieren','export-json')}</div></div><div class="card"><h2>Letzte Buchungen</h2>${movementTable(db.movements.slice(-5).reverse())}</div>`},
