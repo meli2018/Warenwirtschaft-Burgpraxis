@@ -150,3 +150,19 @@ productModal = function(p) {
     if (text) text.textContent = text.textContent.replace('Einzelpreis', 'Gesamtpreis');
   }
 };
+const alteUebersicht = pages.dashboard;
+
+pages.dashboard = function() {
+  const warnungen = db.products
+    .filter(p => qty(p.id) <= 3)
+    .map(p => esc(p.name) + ' (' + qty(p.id) + ' Stück)');
+
+  const hinweis = warnungen.length
+    ? '<div class="notice">⚠️ Nachbestellen: ' + warnungen.join(', ') + '</div>'
+    : '';
+
+  return hinweis + alteUebersicht();
+};
+
+render();
+
