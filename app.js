@@ -114,7 +114,7 @@ productModal = function(p) {
   bisherigesArtikelFenster(p);
 
   const feld = [...document.querySelectorAll('#productForm input')]
-    .find(x => x.closest('label')?.textContent.trim() === 'Kaufjahr');
+  .find(x => x.name === 'Kaufjahr' || x.id === 'Kaufjahr' || x.closest('label')?.textContent.includes('Kaufjahr'));
 
   if (!feld) return;
 
