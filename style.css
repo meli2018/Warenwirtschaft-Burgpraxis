@@ -4,3 +4,4 @@
 #productForm button[data-action="scan"] {
   display: none !important;
 }header,button,nav button.active {background: #526F91 !important;}
+nav button {color: white ,important,
