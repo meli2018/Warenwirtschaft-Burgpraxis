@@ -181,7 +181,7 @@ productModal = function(p) {
   if (!speichern) return;
 
   speichern.insertAdjacentHTML('beforebegin',
-    `<label>Stückzahl
+    <label style="display:none">Stückzahl
     <input name="stock" type="number" min="0" step="1"
     required value="${p?.id ? qty(p.id) : 0}">
     </label>`);
@@ -194,7 +194,9 @@ window.addEventListener('click', e => {
   if (!formular || !formular.contains(knopf) ||
       knopf.textContent.trim() !== 'Artikel speichern') return;
 
-  const eingabe = formular.elements.stock.value;
+  
+const eingabe = formular.elements['custom_' + db.fields.find(f => f.label === 'Stück')?.id]?.value ?? '';
+  
   const menge = Number(eingabe);
 
   if (eingabe === '' || !Number.isInteger(menge) || menge < 0) {
