@@ -169,3 +169,65 @@ render();
 delete headings.movements;
 pages.dashboard = alteUebersicht;
 render();
+
+const altesMengenFenster = productModal;
+
+productModal = function(p) {
+  altesMengenFenster(p);
+  const formular = document.getElementById('productForm');
+  const speichern = [...formular.querySelectorAll('button')]
+    .find(b => b.textContent.trim() === 'Artikel speichern');
+
+  if (!speichern) return;
+
+  speichern.insertAdjacentHTML('beforebegin',
+    `<label>Stückzahl
+    <input name="stock" type="number" min="0" step="1"
+    required value="${p?.id ? qty(p.id) : 0}">
+    </label>`);
+};
+
+window.addEventListener('click', e => {
+  const knopf = e.target.closest('button');
+  const formular = document.getElementById('productForm');
+
+  if (!formular || !formular.contains(knopf) ||
+      knopf.textContent.trim() !== 'Artikel speichern') return;
+
+  const eingabe = formular.elements.stock.value;
+  const menge = Number(eingabe);
+
+  if (eingabe === '' || !Number.isInteger(menge) || menge < 0) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    alert('Bitte gültige Stückzahl eingeben.');
+    return;
+  }
+
+  if (!formular.elements.name.value.trim()) return;
+
+  const alteId = formular.elements.id.value;
+  const anzahlVorher = db.products.length;
+
+  queueMicrotask(() => {
+    const artikel = alteId
+      ? db.products.find(p => p.id === alteId)
+      : db.products[anzahlVorher];
+
+    if (!artikel) return;
+
+    const unterschied = menge - qty(artikel.id);
+
+    if (unterschied !== 0) {
+      db.movements.push({
+        id: id(),
+        date: new Date().toISOString(),
+        productId: artikel.id,
+        warehouseId: db.warehouses[0].id,
+        delta: unterschied,
+        reason: 'Stückzahl direkt gespeichert'
+      });
+      save();
+    }
+  });
+}, true);
