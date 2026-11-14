@@ -54,9 +54,10 @@ function productModal(p){
   const currentYear=new Date().getFullYear();
   const customFields=db.fields.map(f=>{
     const key='custom_'+f.id, label=String(f.label||'').trim().toLowerCase();
-    if(label==='stück'){
-      const menge=p.id?qty(p.id):0;
-      return `<label>${esc(f.label)}<input name="${esc(key)}" type="number" inputmode="numeric" min="0" step="1" value="${esc(menge)}"></label>`;
+    if(label==='stück'||label==='packung'){
+      const active=String(p.stockUnit||'').toLowerCase();
+      const menge=!p.id?'':(active===label||(!active&&label==='stück')?qty(p.id):(p.custom?.[f.id]??''));
+      return `<label>${esc(f.label)}<input data-stock-kind="${label}" name="${esc(key)}" type="number" inputmode="numeric" min="0" step="1" value="${esc(menge)}"></label>`;
     }
     if(label==='kaufjahr'){
       const saved=String(p.custom?.[f.id]||currentYear);
@@ -99,30 +100,52 @@ function saveProductDirect(f){
   const price=rawPrice===''?0:Number(rawPrice);
   const p=db.products.find(x=>String(x.id)===String(v.id)),custom={};
   db.fields.forEach(x=>custom[x.id]=v['custom_'+x.id]||'');
-  const stueckFeld=db.fields.find(x=>String(x.label||'').trim().toLowerCase()==='stück');
-  const eingabe=stueckFeld?v['custom_'+stueckFeld.id]:undefined;
+  const quantityFields=db.fields.filter(x=>['stück','packung'].includes(String(x.label||'').trim().toLowerCase()));
+  const valueFor=x=>v['custom_'+x.id];
+  const filled=x=>x&&valueFor(x)!==undefined&&String(valueFor(x)).trim()!=='';
+  const pack=quantityFields.find(x=>String(x.label).trim().toLowerCase()==='packung');
+  const stueck=quantityFields.find(x=>String(x.label).trim().toLowerCase()==='stück');
+  // The last quantity field edited determines the article's stock. Only one quantity counts.
+  const edited=String(f.dataset.stockKind||'').toLowerCase();
+  const former=String(p?.stockUnit||'').toLowerCase();
+  let kind=['stück','packung'].includes(edited)?edited:former;
+  if(!kind){
+    kind=filled(pack)&&(!filled(stueck)||Number(valueFor(stueck))===0)&&Number(valueFor(pack))>0?'packung':'stück';
+  }
+  let activeField=kind==='packung'?pack:stueck;
+  if(!activeField){activeField=pack||stueck;kind=activeField?String(activeField.label).trim().toLowerCase():'';}
   let neuerBestand=null;
-  if(stueckFeld){
-    if(eingabe===undefined||String(eingabe).trim()==='')
-      throw Error('Bitte die Stückzahl eingeben.');
-    neuerBestand=Number(eingabe);
+  if(activeField&&filled(activeField)){
+    neuerBestand=Number(valueFor(activeField));
     if(!Number.isInteger(neuerBestand)||neuerBestand<0)
-      throw Error('Bitte bei Stück eine ganze Zahl ab 0 eingeben.');
-    if(!db.warehouses?.length)throw Error('Kein Lagerort vorhanden.');
+      throw Error('Bitte bei '+activeField.label+' eine ganze Zahl ab 0 eingeben.');
+  } else if(activeField&&p&&p.stock!==undefined){
+    neuerBestand=Number(p.stock);
+  } else if(activeField&&filled(kind==='packung'?stueck:pack)){
+    activeField=kind==='packung'?stueck:pack;
+    kind=String(activeField.label).trim().toLowerCase();
+    neuerBestand=Number(valueFor(activeField));
+    if(!Number.isInteger(neuerBestand)||neuerBestand<0)
+      throw Error('Bitte bei '+activeField.label+' eine ganze Zahl ab 0 eingeben.');
   }
   const data={id:p?.id||id(),name,sku:v.sku,barcode:v.barcode,category:v.category,price,custom};
-  if(neuerBestand!==null)data.stock=neuerBestand;
+  if(neuerBestand!==null){data.stock=neuerBestand;data.stockUnit=kind;}
   if(p)Object.assign(p,data);else db.products.push(data);
   close();
   save();
     const gespeichert=db.products.find(x=>String(x.id)===String(v.id))||db.products[db.products.length-1];
-    notice('Artikel gespeichert. Bestand: '+qty(gespeichert.id)+' Stück.');
+    const units=gespeichert.stockUnit==='packung'?(qty(gespeichert.id)===1?'Packung':'Packungen'):'Stück';
+    notice('Artikel gespeichert. Bestand: '+qty(gespeichert.id)+' '+units+'.');
   }catch(err){
     notice('Artikel konnte nicht gespeichert werden: '+err.message);
   }
 }
 function handleAction(a){let [cmd,arg]=a.split(':');if(cmd==='save-product'){saveProductDirect();return;}if(cmd==='new-product')productModal();if(cmd==='edit-product')productModal(db.products.find(p=>p.id===arg));if(cmd==='book-product')movementModal(arg);if(cmd==='new-movement')movementModal();if(cmd==='inventory-page'){page='inventory';render()}if(cmd==='new-warehouse'||cmd==='edit-warehouse'){let w=db.warehouses.find(x=>x.id===arg);modal(`<h2>Lagerort</h2><form id="warehouseForm" class="fields"><input name="id" value="${esc(w?.id||'')}" hidden>${field('name','Name',w?.name||'','text',true)}<button>Speichern</button></form>`)}if(cmd==='new-category')modal(`<h2>Kategorie hinzufügen</h2><form id="categoryForm" class="fields">${field('name','Name','','text',true)}<button>Speichern</button></form>`);if(cmd==='new-field')modal(`<h2>Eigenes Artikelfeld</h2><form id="fieldForm" class="fields">${field('label','Feldbezeichnung','','text',true)}${sel('type','Typ',[{value:'text',label:'Text'},{value:'number',label:'Zahl'},{value:'date',label:'Datum'}])}<button>Hinzufügen</button></form>`);if(cmd==='delete-field'){if(confirm('Feld und gespeicherte Feldwerte entfernen?')){db.fields=db.fields.filter(f=>f.id!==arg);db.products.forEach(p=>delete p.custom[arg]);save()}}if(cmd==='new-view')modal(`<h2>Neue Tabellenansicht</h2><form id="viewForm" class="fields">${field('name','Ansichtsname','','text',true)}${['name','sku','barcode','category','price','stock'].map(x=>`<label><input type="checkbox" name="columns" value="${x}" checked> ${x}</label>`).join('')}<button>Ansicht speichern</button></form>`);if(cmd==='view'){let v=db.views.find(x=>x.id===arg);modal(`<h2>${esc(v.name)}</h2><div class="scroll"><table><tr>${v.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${db.products.map(p=>`<tr>${v.columns.map(c=>`<td>${esc(c==='stock'?qty(p.id):p[c])}</td>`).join('')}</tr>`).join('')}</table></div>`)}if(cmd==='delete-view'){db.views=db.views.filter(v=>v.id!==arg);save()}if(cmd==='new-workflow')modal(`<h2>Buchungsvorlage</h2><form id="workflowForm" class="fields">${field('name','Name (z. B. Retoure)','','text',true)}${field('delta','Standardmenge (+ / −)',1,'number',true)}<button>Speichern</button></form>`);if(cmd==='run-workflow'){let w=db.workflows.find(x=>x.id===arg);movementModal('',w.delta)}if(cmd==='delete-workflow'){db.workflows=db.workflows.filter(w=>w.id!==arg);save()}if(cmd==='delete-product'){if(confirm('Artikel löschen? Frühere Buchungen bleiben im Protokoll.')){db.products=db.products.filter(p=>p.id!==arg);close();save()}}if(cmd.startsWith('export-'))exportFile(cmd.slice(7));if(cmd==='import-json')document.getElementById('importFile').click();if(cmd==='scan')startScan();if(cmd==='cloud-pull')cloudPull();if(cmd==='cloud-push')cloudPush();if(cmd==='logout'){session=null;sessionStorage.removeItem('wp-session');render()}}
 document.addEventListener('click',e=>{let b=e.target.closest('[data-page],[data-action]');if(!b)return;if(b.dataset.page){page=b.dataset.page;render()}else handleAction(b.dataset.action)});
+document.addEventListener('input',e=>{
+  const unit=e.target?.dataset?.stockKind;
+  if(unit&&e.target.closest('#productForm'))e.target.closest('#productForm').dataset.stockKind=unit;
+});
 document.addEventListener('input',e=>{if(e.target.id==='search')document.getElementById('productRows').innerHTML=productRows(e.target.value)});
 document.addEventListener('submit',async e=>{const f=e.target;const formId=f.getAttribute('id');if(!formId)return;e.preventDefault();let v=formData(f);try{if(formId==='productForm'){saveProductDirect(f);return;}if(formId==='warehouseForm'){let w=db.warehouses.find(x=>x.id===v.id);if(w)w.name=v.name;else db.warehouses.push({id:id(),name:v.name});close();save()}if(formId==='categoryForm'){if(!db.categories.includes(v.name))db.categories.push(v.name);close();save()}if(formId==='fieldForm'){db.fields.push({id:id(),label:v.label,type:v.type});close();save()}if(formId==='viewForm'){db.views.push({id:id(),name:v.name,columns:[...new FormData(f).getAll('columns')]});close();save()}if(formId==='workflowForm'){db.workflows.push({id:id(),name:v.name,delta:Number(v.delta)});close();save()}if(formId==='movementForm'){addMovement(v);close();save()}if(formId==='inventoryForm'){
   const gezählt=Number(v.count),produkt=db.products.find(p=>String(p.id)===String(v.productId));
