@@ -181,7 +181,7 @@ productModal = function(p) {
   if (!speichern) return;
 
   speichern.insertAdjacentHTML('beforebegin',
-    <label style="display:none">Stückzahl
+    '<label style="display:none">Stückzahl
     <input name="stock" type="number" min="0" step="1"
     required value="${p?.id ? qty(p.id) : 0}">
     </label>`);
