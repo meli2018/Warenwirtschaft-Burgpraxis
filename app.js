@@ -38,7 +38,28 @@ function button(text,act,cl='secondary'){return `<button class="${cl}" data-acti
 const headings={dashboard:'Übersicht',products:'Artikel',movements:'Buchungen',inventory:'Inventur',reports:'Auswertungen',designer:'Gestalten',settings:'Einstellungen'};
 function render(){document.getElementById('nav').innerHTML=Object.entries(headings).map(([k,v])=>`<button data-page="${k}" class="${page===k?'active':''}">${v}</button>`).join('');document.getElementById('app').innerHTML=pages[page]();}
 const pages={
- dashboard(){return `<div class="toolbar"><h1>Übersicht</h1>${button('+ Neuer Artikel','new-product','')}</div><div class="grid"><div class="card"><div class="muted">Artikel</div><div class="metric">${db.products.length}</div></div></div><div class="card"><h2>Schnellzugriff</h2><div class="actions">${button('Inventur','inventory-page')}${button('Daten exportieren','export-json')}</div></div>`},
+ dashboard(){
+  const kaufjahrFeld=db.fields.find(f=>String(f.label||'').trim().toLowerCase()==='kaufjahr');
+  const diesesJahr=new Date().getFullYear();
+  const auswahl=Number(sessionStorage.getItem('warenpilot-ausgaben-jahr')||diesesJahr);
+  const jahre=Array.from({length:Math.max(diesesJahr+5,auswahl,2024)-2024+1},(_,i)=>2024+i);
+  const jahreswert=db.products.reduce((sum,p)=>{
+    if(!kaufjahrFeld||Number(p.custom?.[kaufjahrFeld.id])!==auswahl)return sum;
+    return sum+(Number(p.price)||0);
+  },0);
+  return `<div class="toolbar"><h1>Übersicht</h1>${button('+ Neuer Artikel','new-product','')}</div>
+    <div class="grid">
+      <div class="card"><div class="muted">Artikel</div><div class="metric">${db.products.length}</div></div>
+      <div class="card">
+        <label>Einkaufsjahr
+          <select id="ausgabenJahr">${jahre.map(y=>`<option value="${y}" ${y===auswahl?'selected':''}>${y}</option>`).join('')}</select>
+        </label>
+        <div class="muted">Einkaufskosten ${auswahl}</div>
+        <div class="metric">${money(jahreswert)}</div>
+      </div>
+    </div>
+    <div class="card"><h2>Schnellzugriff</h2><div class="actions">${button('Inventur','inventory-page')}${button('Daten exportieren','export-json')}</div></div>`;
+ },
  products(){return `<div class="toolbar"><h1>Artikel</h1>${button('+ Artikel erstellen','new-product','')}</div><div class="card"><label>Artikel suchen<input id="search" placeholder="Name, SKU, Barcode ..."></label></div><div class="card scroll"><table><thead><tr><th>Artikel</th><th>SKU / Barcode</th><th>Kategorie</th><th>Bestand</th><th>Preis</th><th>Aktionen</th></tr></thead><tbody id="productRows">${productRows()}</tbody></table></div>`},
  warehouses(){return `<div class="toolbar"><h1>Lagerorte</h1>${button('+ Lagerort','new-warehouse','')}</div><div class="card scroll"><table><tr><th>Lager</th><th>Artikelpositionen</th><th>Aktion</th></tr>${db.warehouses.map(w=>`<tr><td>${esc(w.name)}</td><td>${db.products.filter(p=>qty(p.id,w.id)!==0).length}</td><td>${button('Bearbeiten','edit-warehouse:'+w.id)}</td></tr>`).join('')}</table></div>`},
  movements(){return `<div class="toolbar"><h1>Wareneingang & Warenausgang</h1>${button('+ Buchung','new-movement','')}</div><div class="card scroll">${movementTable([...db.movements].reverse())}</div>`},
