@@ -72,8 +72,8 @@ document.addEventListener('input',e=>{if(e.target.id==='search')document.getElem
 document.addEventListener('submit',async e=>{const f=e.target;if(!f.id)return;e.preventDefault();let v=formData(f);try{if(f.id==='productForm'){
   const name=String(v.name||'').trim();
   if(!name)throw Error('Bitte einen Artikelnamen eingeben.');
-  const rawPrice=String(v.price??'').trim().replace(/\\s/g,'').replace(',','.');
-  if(rawPrice!==''&&!/^\\d+(?:\\.\\d{1,2})?$/.test(rawPrice))
+  const rawPrice=String(v.price??'').trim().replace(/\s/g,'').replace(',','.');
+  if(rawPrice!==''&&!/^\d+(?:\.\d{1,2})?$/.test(rawPrice))
     throw Error('Bitte einen gültigen Preis eingeben, zum Beispiel 6,32.');
   const price=rawPrice===''?0:Number(rawPrice);
   const p=db.products.find(x=>x.id===v.id),custom={};
