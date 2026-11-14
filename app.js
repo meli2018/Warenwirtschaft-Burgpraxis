@@ -10,7 +10,7 @@ function close(){stopScan();document.getElementById('dialog').close()}
 function notice(s){alert(s)}
 const qty=(p,w)=>db.movements.filter(m=>m.productId===p&&(w?m.warehouseId===w:true)).reduce((n,m)=>n+Number(m.delta),0);
 const money=n=>new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR'}).format(n||0);
-const field=(name,label,value='',type='text',required=false)=>`<label>${esc(label)}<input name="${esc(name)}" type="${type}" value="${esc(value)}" ${required?'required':''}></label>`;
+const field=(name,label,value='',type='text',required=false)=>`<label>${esc(label)}<input name="${esc(name)}" type="${type}" ${type==='number'?'step="any"':''} value="${esc(value)}" ${required?'required':''}></label>`;
 const sel=(name,label,opts,chosen='')=>`<label>${esc(label)}<select name="${esc(name)}">${opts.map(o=>`<option value="${esc(o.value)}" ${String(o.value)===String(chosen)?'selected':''}>${esc(o.label)}</option>`).join('')}</select></label>`;
 const opt=a=>a.map(x=>({value:x.id,label:x.name}));
 function formData(form){return Object.fromEntries(new FormData(form).entries())}
