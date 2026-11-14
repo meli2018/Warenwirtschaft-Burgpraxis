@@ -8,7 +8,27 @@ function save(){localStorage.setItem(KEY,JSON.stringify(db));document.getElement
 function modal(html){document.getElementById('dialogContent').innerHTML=html;document.getElementById('dialog').showModal()}
 function close(){stopScan();document.getElementById('dialog').close()}
 function notice(s){alert(s)}
-const qty=(p,w)=>db.movements.filter(m=>m.productId===p&&(w?m.warehouseId===w:true)).reduce((n,m)=>n+Number(m.delta),0);
+// Neuer Bestand wird direkt am Artikel gespeichert. Ältere Daten bleiben lesbar.
+function qty(productId,warehouseId){
+  const product=db.products.find(p=>String(p.id)===String(productId));
+  const mainId=db.warehouses?.[0]?.id;
+  const mainOnly=warehouseId===undefined||warehouseId===null||String(warehouseId)===String(mainId);
+  const stock=product?.stock;
+  if(stock!==undefined&&stock!==null&&stock!==''&&Number.isFinite(Number(stock))&&Number(stock)>=0){
+    if(mainOnly)return Number(stock);
+    return 0;
+  }
+  const movements=(db.movements||[]).filter(m=>String(m.productId)===String(productId));
+  if(movements.length){
+    return movements.filter(m=>warehouseId===undefined||warehouseId===null||String(m.warehouseId)===String(warehouseId))
+      .reduce((n,m)=>n+(Number(m.delta)||0),0);
+  }
+  if(!product||!mainOnly)return 0;
+  const countField=db.fields.find(f=>String(f.label||'').trim().toLowerCase()==='stück');
+  const oldValue=countField?product.custom?.[countField.id]:undefined;
+  return oldValue!==undefined&&oldValue!==''&&Number.isFinite(Number(oldValue))&&Number(oldValue)>=0
+    ?Number(oldValue):0;
+}
 const money=n=>new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR'}).format(n||0);
 const field=(name,label,value='',type='text',required=false)=>`<label>${esc(label)}<input name="${esc(name)}" type="${type}" ${type==='number'?'step="any"':''} value="${esc(value)}" ${required?'required':''}></label>`;
 const sel=(name,label,opts,chosen='')=>`<label>${esc(label)}<select name="${esc(name)}">${opts.map(o=>`<option value="${esc(o.value)}" ${String(o.value)===String(chosen)?'selected':''}>${esc(o.label)}</option>`).join('')}</select></label>`;
@@ -35,9 +55,7 @@ function productModal(p){
   const customFields=db.fields.map(f=>{
     const key='custom_'+f.id, label=String(f.label||'').trim().toLowerCase();
     if(label==='stück'){
-      const alteEingabe=p.custom?.[f.id];
-      const hatBuchungen=(db.movements||[]).some(m=>String(m.productId)===String(p.id));
-      const menge=p.id?(hatBuchungen?qty(p.id):(alteEingabe!==undefined&&alteEingabe!==''?alteEingabe:qty(p.id))):0;
+      const menge=p.id?qty(p.id):0;
       return `<label>${esc(f.label)}<input name="${esc(key)}" type="number" inputmode="numeric" min="0" step="1" value="${esc(menge)}"></label>`;
     }
     if(label==='kaufjahr'){
@@ -93,14 +111,8 @@ function saveProductDirect(f){
     if(!db.warehouses?.length)throw Error('Kein Lagerort vorhanden.');
   }
   const data={id:p?.id||id(),name,sku:v.sku,barcode:v.barcode,category:v.category,price,custom};
+  if(neuerBestand!==null)data.stock=neuerBestand;
   if(p)Object.assign(p,data);else db.products.push(data);
-  if(neuerBestand!==null){
-    const delta=neuerBestand-qty(data.id);
-    if(delta!==0)db.movements.push({
-      id:id(),date:new Date().toISOString(),productId:data.id,
-      warehouseId:db.warehouses[0].id,delta,reason:'Bestand beim Artikel gespeichert'
-    });
-  }
   close();
   save();
     const gespeichert=db.products.find(x=>String(x.id)===String(v.id))||db.products[db.products.length-1];
@@ -112,7 +124,18 @@ function saveProductDirect(f){
 function handleAction(a){let [cmd,arg]=a.split(':');if(cmd==='save-product'){saveProductDirect();return;}if(cmd==='new-product')productModal();if(cmd==='edit-product')productModal(db.products.find(p=>p.id===arg));if(cmd==='book-product')movementModal(arg);if(cmd==='new-movement')movementModal();if(cmd==='inventory-page'){page='inventory';render()}if(cmd==='new-warehouse'||cmd==='edit-warehouse'){let w=db.warehouses.find(x=>x.id===arg);modal(`<h2>Lagerort</h2><form id="warehouseForm" class="fields"><input name="id" value="${esc(w?.id||'')}" hidden>${field('name','Name',w?.name||'','text',true)}<button>Speichern</button></form>`)}if(cmd==='new-category')modal(`<h2>Kategorie hinzufügen</h2><form id="categoryForm" class="fields">${field('name','Name','','text',true)}<button>Speichern</button></form>`);if(cmd==='new-field')modal(`<h2>Eigenes Artikelfeld</h2><form id="fieldForm" class="fields">${field('label','Feldbezeichnung','','text',true)}${sel('type','Typ',[{value:'text',label:'Text'},{value:'number',label:'Zahl'},{value:'date',label:'Datum'}])}<button>Hinzufügen</button></form>`);if(cmd==='delete-field'){if(confirm('Feld und gespeicherte Feldwerte entfernen?')){db.fields=db.fields.filter(f=>f.id!==arg);db.products.forEach(p=>delete p.custom[arg]);save()}}if(cmd==='new-view')modal(`<h2>Neue Tabellenansicht</h2><form id="viewForm" class="fields">${field('name','Ansichtsname','','text',true)}${['name','sku','barcode','category','price','stock'].map(x=>`<label><input type="checkbox" name="columns" value="${x}" checked> ${x}</label>`).join('')}<button>Ansicht speichern</button></form>`);if(cmd==='view'){let v=db.views.find(x=>x.id===arg);modal(`<h2>${esc(v.name)}</h2><div class="scroll"><table><tr>${v.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${db.products.map(p=>`<tr>${v.columns.map(c=>`<td>${esc(c==='stock'?qty(p.id):p[c])}</td>`).join('')}</tr>`).join('')}</table></div>`)}if(cmd==='delete-view'){db.views=db.views.filter(v=>v.id!==arg);save()}if(cmd==='new-workflow')modal(`<h2>Buchungsvorlage</h2><form id="workflowForm" class="fields">${field('name','Name (z. B. Retoure)','','text',true)}${field('delta','Standardmenge (+ / −)',1,'number',true)}<button>Speichern</button></form>`);if(cmd==='run-workflow'){let w=db.workflows.find(x=>x.id===arg);movementModal('',w.delta)}if(cmd==='delete-workflow'){db.workflows=db.workflows.filter(w=>w.id!==arg);save()}if(cmd==='delete-product'){if(confirm('Artikel löschen? Frühere Buchungen bleiben im Protokoll.')){db.products=db.products.filter(p=>p.id!==arg);close();save()}}if(cmd.startsWith('export-'))exportFile(cmd.slice(7));if(cmd==='import-json')document.getElementById('importFile').click();if(cmd==='scan')startScan();if(cmd==='cloud-pull')cloudPull();if(cmd==='cloud-push')cloudPush();if(cmd==='logout'){session=null;sessionStorage.removeItem('wp-session');render()}}
 document.addEventListener('click',e=>{let b=e.target.closest('[data-page],[data-action]');if(!b)return;if(b.dataset.page){page=b.dataset.page;render()}else handleAction(b.dataset.action)});
 document.addEventListener('input',e=>{if(e.target.id==='search')document.getElementById('productRows').innerHTML=productRows(e.target.value)});
-document.addEventListener('submit',async e=>{const f=e.target;const formId=f.getAttribute('id');if(!formId)return;e.preventDefault();let v=formData(f);try{if(formId==='productForm'){saveProductDirect(f);return;}if(formId==='warehouseForm'){let w=db.warehouses.find(x=>x.id===v.id);if(w)w.name=v.name;else db.warehouses.push({id:id(),name:v.name});close();save()}if(formId==='categoryForm'){if(!db.categories.includes(v.name))db.categories.push(v.name);close();save()}if(formId==='fieldForm'){db.fields.push({id:id(),label:v.label,type:v.type});close();save()}if(formId==='viewForm'){db.views.push({id:id(),name:v.name,columns:[...new FormData(f).getAll('columns')]});close();save()}if(formId==='workflowForm'){db.workflows.push({id:id(),name:v.name,delta:Number(v.delta)});close();save()}if(formId==='movementForm'){addMovement(v);close();save()}if(formId==='inventoryForm'){let current=qty(v.productId,v.warehouseId),delta=Number(v.count)-current;if(delta)addMovement({...v,delta,reason:'Inventurkorrektur'});save();notice('Inventur erfasst.')}if(formId==='cloudConfig'){let u=new URL(v.url);if(u.protocol!=='https:'||!u.hostname.endsWith('.supabase.co'))throw Error('Bitte gültige Supabase-Projekt-URL verwenden.');config={url:u.origin,key:v.key.trim()};localStorage.setItem(CFG,JSON.stringify(config));render();notice('Verbindung gespeichert.')}if(formId==='authForm'){let mode=e.submitter?.value||'login';await authenticate(v.email,v.password,mode)}}catch(err){notice(err.message)}});
+document.addEventListener('submit',async e=>{const f=e.target;const formId=f.getAttribute('id');if(!formId)return;e.preventDefault();let v=formData(f);try{if(formId==='productForm'){saveProductDirect(f);return;}if(formId==='warehouseForm'){let w=db.warehouses.find(x=>x.id===v.id);if(w)w.name=v.name;else db.warehouses.push({id:id(),name:v.name});close();save()}if(formId==='categoryForm'){if(!db.categories.includes(v.name))db.categories.push(v.name);close();save()}if(formId==='fieldForm'){db.fields.push({id:id(),label:v.label,type:v.type});close();save()}if(formId==='viewForm'){db.views.push({id:id(),name:v.name,columns:[...new FormData(f).getAll('columns')]});close();save()}if(formId==='workflowForm'){db.workflows.push({id:id(),name:v.name,delta:Number(v.delta)});close();save()}if(formId==='movementForm'){addMovement(v);close();save()}if(formId==='inventoryForm'){
+  const gezählt=Number(v.count),produkt=db.products.find(p=>String(p.id)===String(v.productId));
+  if(!produkt||!Number.isInteger(gezählt)||gezählt<0)throw Error('Bitte gültige Stückzahl eingeben.');
+  const ist=qty(v.productId,v.warehouseId),delta=gezählt-ist;
+  if(delta)addMovement({...v,delta,reason:'Inventurkorrektur'});
+  if(String(v.warehouseId)===String(db.warehouses[0]?.id)){
+    produkt.stock=gezählt;
+    const stueckFeld=db.fields.find(x=>String(x.label||'').trim().toLowerCase()==='stück');
+    if(stueckFeld){produkt.custom=produkt.custom||{};produkt.custom[stueckFeld.id]=String(gezählt);}
+  }
+  save();notice('Inventur erfasst.');
+}if(formId==='cloudConfig'){let u=new URL(v.url);if(u.protocol!=='https:'||!u.hostname.endsWith('.supabase.co'))throw Error('Bitte gültige Supabase-Projekt-URL verwenden.');config={url:u.origin,key:v.key.trim()};localStorage.setItem(CFG,JSON.stringify(config));render();notice('Verbindung gespeichert.')}if(formId==='authForm'){let mode=e.submitter?.value||'login';await authenticate(v.email,v.password,mode)}}catch(err){notice(err.message)}});
 document.addEventListener('change',async e=>{if(e.target.id==='importFile'){let file=e.target.files[0];if(!file)return;try{let d=JSON.parse(await file.text());if(!Array.isArray(d.products)||!Array.isArray(d.movements)||!Array.isArray(d.warehouses))throw Error('Ungültige Sicherungsdatei');if(confirm('Alle lokalen Daten durch die Sicherung ersetzen?')){db={...blank(),...d};save()}}catch(err){notice(err.message)}}});
 async function startScan(){if(!('BarcodeDetector'in window)||!navigator.mediaDevices?.getUserMedia){notice('Kamera-Barcode-Erkennung wird hier nicht unterstützt. Barcode bitte manuell eingeben.');return}try{scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});let box=document.getElementById('scanner');box.innerHTML='<video autoplay playsinline muted></video><p class="muted">Barcode vor die Kamera halten.</p>';let video=box.querySelector('video');video.srcObject=scanStream;let detector=new BarcodeDetector();let active=scanStream;async function tick(){if(scanStream!==active)return;try{let codes=await detector.detect(video);if(codes.length){document.querySelector('[name=barcode]').value=codes[0].rawValue;stopScan();box.textContent='Code erkannt: '+codes[0].rawValue;return}}catch{}setTimeout(tick,350)}tick()}catch(err){notice('Kamera konnte nicht geöffnet werden: '+err.message)}}
 function stopScan(){if(scanStream){scanStream.getTracks().forEach(t=>t.stop());scanStream=null}}
