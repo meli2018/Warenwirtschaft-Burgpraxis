@@ -35,7 +35,9 @@ function productModal(p){
   const customFields=db.fields.map(f=>{
     const key='custom_'+f.id, label=String(f.label||'').trim().toLowerCase();
     if(label==='stück'){
-      const menge=p.id?qty(p.id):0;
+      const alteEingabe=p.custom?.[f.id];
+      const hatBuchungen=(db.movements||[]).some(m=>String(m.productId)===String(p.id));
+      const menge=p.id?(hatBuchungen?qty(p.id):(alteEingabe!==undefined&&alteEingabe!==''?alteEingabe:qty(p.id))):0;
       return `<label>${esc(f.label)}<input name="${esc(key)}" type="number" inputmode="numeric" min="0" step="1" value="${esc(menge)}"></label>`;
     }
     if(label==='kaufjahr'){
@@ -74,10 +76,10 @@ function saveProductDirect(f){
     const name=String(v.name||'').trim();
   if(!name)throw Error('Bitte einen Artikelnamen eingeben.');
   const rawPrice=String(v.price??'').trim().replace(/\s/g,'').replace(',','.');
-  if(rawPrice!==''&&!/^\d+(?:\.\d{1,2})?$/.test(rawPrice))
+  if(rawPrice!==''&&(!Number.isFinite(Number(rawPrice))||Number(rawPrice)<0))
     throw Error('Bitte einen gültigen Preis eingeben, zum Beispiel 6,32.');
   const price=rawPrice===''?0:Number(rawPrice);
-  const p=db.products.find(x=>x.id===v.id),custom={};
+  const p=db.products.find(x=>String(x.id)===String(v.id)),custom={};
   db.fields.forEach(x=>custom[x.id]=v['custom_'+x.id]||'');
   const stueckFeld=db.fields.find(x=>String(x.label||'').trim().toLowerCase()==='stück');
   const eingabe=stueckFeld?v['custom_'+stueckFeld.id]:undefined;
@@ -101,7 +103,8 @@ function saveProductDirect(f){
   }
   close();
   save();
-    notice('Artikel gespeichert.');
+    const gespeichert=db.products.find(x=>String(x.id)===String(v.id))||db.products[db.products.length-1];
+    notice('Artikel gespeichert. Bestand: '+qty(gespeichert.id)+' Stück.');
   }catch(err){
     notice('Artikel konnte nicht gespeichert werden: '+err.message);
   }
