@@ -29,7 +29,38 @@ const pages={
 };
 function productRows(search=''){return db.products.filter(p=>[p.name,p.sku,p.barcode].join(' ').toLowerCase().includes(search.toLowerCase())).map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${esc(p.sku)}<br><small>${esc(p.barcode)}</small></td><td>${esc(p.category)}</td><td>${qty(p.id)}</td><td>${money(p.price)}</td><td>${button('Bearbeiten','edit-product:'+p.id)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">Keine Artikel vorhanden</td></tr>'}
 function movementTable(arr){return `<table><tr><th>Datum</th><th>Artikel</th><th>Lager</th><th>Menge</th><th>Grund</th></tr>${arr.map(m=>`<tr><td>${esc(new Date(m.date).toLocaleString('de-DE'))}</td><td>${esc(db.products.find(p=>p.id===m.productId)?.name||'Gelöscht')}</td><td>${esc(db.warehouses.find(w=>w.id===m.warehouseId)?.name||'Gelöscht')}</td><td>${m.delta>0?'+':''}${m.delta}</td><td>${esc(m.reason)}</td></tr>`).join('')}</table>`}
-function productModal(p){p=p||{id:'',name:'',sku:'',barcode:'',category:db.categories[0],price:0,custom:{}};modal(`<h2>${p.id?'Artikel bearbeiten':'Neuer Artikel'}</h2><form id="productForm" class="fields"><input name="id" value="${esc(p.id)}" hidden>${field('name','Artikelname',p.name,'text',true)}${field('sku','Artikelnummer / SKU',p.sku)}${field('barcode','Barcode oder QR-Inhalt',p.barcode)}${button('📷 Barcode scannen','scan','secondary')}${sel('category','Kategorie',db.categories.map(c=>({value:c,label:c})),p.category)}${field('price','Einzelpreis in EUR',p.price,'number')}${db.fields.map(f=>field('custom_'+f.id,f.label,p.custom?.[f.id]||'',f.type)).join('')}<button>Artikel speichern</button></form><div id="scanner"></div>${p.id?button('Artikel löschen','delete-product:'+p.id,'danger'):''}`)}
+function productModal(p){
+  p=p||{id:'',name:'',sku:'',barcode:'',category:db.categories[0],price:0,custom:{}};
+  const currentYear=new Date().getFullYear();
+  const customFields=db.fields.map(f=>{
+    const key='custom_'+f.id, label=String(f.label||'').trim().toLowerCase();
+    if(label==='stück'){
+      const menge=p.id?qty(p.id):0;
+      return `<label>${esc(f.label)}<input name="${esc(key)}" type="number" inputmode="numeric" min="0" step="1" value="${esc(menge)}"></label>`;
+    }
+    if(label==='kaufjahr'){
+      const saved=String(p.custom?.[f.id]||currentYear);
+      const maxYear=Math.max(currentYear+5,Number(saved)||currentYear);
+      const minYear=Math.min(2024,Number(saved)||2024);
+      const years=Array.from({length:maxYear-minYear+1},(_,i)=>({value:String(minYear+i),label:String(minYear+i)}));
+      return sel(key,f.label,years,saved);
+    }
+    return field(key,f.label,p.custom?.[f.id]??'',f.type);
+  }).join('');
+  modal(`<h2>${p.id?'Artikel bearbeiten':'Neuer Artikel'}</h2>
+    <form id="productForm" class="fields" novalidate>
+      <input type="hidden" name="id" value="${esc(p.id)}">
+      ${field('name','Artikelname',p.name,'text',true)}
+      <input type="hidden" name="sku" value="${esc(p.sku)}">
+      <input type="hidden" name="barcode" value="${esc(p.barcode)}">
+      ${sel('category','Kategorie',db.categories.map(c=>({value:c,label:c})),p.category)}
+      <label>Gesamtpreis in EUR<input name="price" type="text" inputmode="decimal" value="${esc(p.price)}"></label>
+      ${customFields}
+      <button type="submit">Artikel speichern</button>
+    </form>
+    <div id="scanner"></div>
+    ${p.id?button('Artikel löschen','delete-product:'+p.id,'danger'):''}`);
+}
 function movementModal(productId='',delta=''){if(!db.products.length)return notice('Bitte zuerst einen Artikel erstellen.');modal(`<h2>Bestandsbuchung</h2><form id="movementForm" class="fields">${sel('productId','Artikel',opt(db.products),productId)}${sel('warehouseId','Lagerort',opt(db.warehouses))}${field('delta','Menge (+ Eingang, − Ausgang)',delta,'number',true)}${field('reason','Grund / Notiz','Wareneingang')}<button>Buchung speichern</button></form>`)}
 function download(name,content,mime){const blob=new Blob([content],{type:mime});const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
 const csv=(rows)=>rows.map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(';')).join('\r\n');
@@ -39,24 +70,36 @@ function handleAction(a){let [cmd,arg]=a.split(':');if(cmd==='new-product')produ
 document.addEventListener('click',e=>{let b=e.target.closest('[data-page],[data-action]');if(!b)return;if(b.dataset.page){page=b.dataset.page;render()}else handleAction(b.dataset.action)});
 document.addEventListener('input',e=>{if(e.target.id==='search')document.getElementById('productRows').innerHTML=productRows(e.target.value)});
 document.addEventListener('submit',async e=>{const f=e.target;if(!f.id)return;e.preventDefault();let v=formData(f);try{if(f.id==='productForm'){
+  const name=String(v.name||'').trim();
+  if(!name)throw Error('Bitte einen Artikelnamen eingeben.');
+  const rawPrice=String(v.price??'').trim().replace(/\\s/g,'').replace(',','.');
+  if(rawPrice!==''&&!/^\\d+(?:\\.\\d{1,2})?$/.test(rawPrice))
+    throw Error('Bitte einen gültigen Preis eingeben, zum Beispiel 6,32.');
+  const price=rawPrice===''?0:Number(rawPrice);
   const p=db.products.find(x=>x.id===v.id),custom={};
   db.fields.forEach(x=>custom[x.id]=v['custom_'+x.id]||'');
   const stueckFeld=db.fields.find(x=>String(x.label||'').trim().toLowerCase()==='stück');
   const eingabe=stueckFeld?v['custom_'+stueckFeld.id]:undefined;
   let neuerBestand=null;
-  if(eingabe!==undefined&&String(eingabe).trim()!==''){
+  if(stueckFeld){
+    if(eingabe===undefined||String(eingabe).trim()==='')
+      throw Error('Bitte die Stückzahl eingeben.');
     neuerBestand=Number(eingabe);
     if(!Number.isInteger(neuerBestand)||neuerBestand<0)
       throw Error('Bitte bei Stück eine ganze Zahl ab 0 eingeben.');
     if(!db.warehouses?.length)throw Error('Kein Lagerort vorhanden.');
   }
-  const data={id:p?.id||id(),name:v.name.trim(),sku:v.sku,barcode:v.barcode,category:v.category,price:Number(v.price)||0,custom};
+  const data={id:p?.id||id(),name,sku:v.sku,barcode:v.barcode,category:v.category,price,custom};
   if(p)Object.assign(p,data);else db.products.push(data);
   if(neuerBestand!==null){
     const delta=neuerBestand-qty(data.id);
-    if(delta!==0)db.movements.push({id:id(),date:new Date().toISOString(),productId:data.id,warehouseId:db.warehouses[0].id,delta,reason:'Bestand beim Artikel gespeichert'});
+    if(delta!==0)db.movements.push({
+      id:id(),date:new Date().toISOString(),productId:data.id,
+      warehouseId:db.warehouses[0].id,delta,reason:'Bestand beim Artikel gespeichert'
+    });
   }
-  close();save();
+  close();
+  save();
 }if(f.id==='warehouseForm'){let w=db.warehouses.find(x=>x.id===v.id);if(w)w.name=v.name;else db.warehouses.push({id:id(),name:v.name});close();save()}if(f.id==='categoryForm'){if(!db.categories.includes(v.name))db.categories.push(v.name);close();save()}if(f.id==='fieldForm'){db.fields.push({id:id(),label:v.label,type:v.type});close();save()}if(f.id==='viewForm'){db.views.push({id:id(),name:v.name,columns:[...new FormData(f).getAll('columns')]});close();save()}if(f.id==='workflowForm'){db.workflows.push({id:id(),name:v.name,delta:Number(v.delta)});close();save()}if(f.id==='movementForm'){addMovement(v);close();save()}if(f.id==='inventoryForm'){let current=qty(v.productId,v.warehouseId),delta=Number(v.count)-current;if(delta)addMovement({...v,delta,reason:'Inventurkorrektur'});save();notice('Inventur erfasst.')}if(f.id==='cloudConfig'){let u=new URL(v.url);if(u.protocol!=='https:'||!u.hostname.endsWith('.supabase.co'))throw Error('Bitte gültige Supabase-Projekt-URL verwenden.');config={url:u.origin,key:v.key.trim()};localStorage.setItem(CFG,JSON.stringify(config));render();notice('Verbindung gespeichert.')}if(f.id==='authForm'){let mode=e.submitter?.value||'login';await authenticate(v.email,v.password,mode)}}catch(err){notice(err.message)}});
 document.addEventListener('change',async e=>{if(e.target.id==='importFile'){let file=e.target.files[0];if(!file)return;try{let d=JSON.parse(await file.text());if(!Array.isArray(d.products)||!Array.isArray(d.movements)||!Array.isArray(d.warehouses))throw Error('Ungültige Sicherungsdatei');if(confirm('Alle lokalen Daten durch die Sicherung ersetzen?')){db={...blank(),...d};save()}}catch(err){notice(err.message)}}});
 async function startScan(){if(!('BarcodeDetector'in window)||!navigator.mediaDevices?.getUserMedia){notice('Kamera-Barcode-Erkennung wird hier nicht unterstützt. Barcode bitte manuell eingeben.');return}try{scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});let box=document.getElementById('scanner');box.innerHTML='<video autoplay playsinline muted></video><p class="muted">Barcode vor die Kamera halten.</p>';let video=box.querySelector('video');video.srcObject=scanStream;let detector=new BarcodeDetector();let active=scanStream;async function tick(){if(scanStream!==active)return;try{let codes=await detector.detect(video);if(codes.length){document.querySelector('[name=barcode]').value=codes[0].rawValue;stopScan();box.textContent='Code erkannt: '+codes[0].rawValue;return}}catch{}setTimeout(tick,350)}tick()}catch(err){notice('Kamera konnte nicht geöffnet werden: '+err.message)}}
@@ -68,74 +111,4 @@ async function cloudPull(){try{let rows=await api('/rest/v1/user_documents?selec
 async function cloudPush(){try{if(!confirm('Cloud-Daten mit dem aktuellen lokalen Stand überschreiben?'))return;await api('/rest/v1/user_documents?on_conflict=user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({user_id:session.user.id,content:db,updated_at:new Date().toISOString()})});document.getElementById('syncState').textContent='Cloud gespeichert';notice('Cloud-Daten gespeichert. Auf anderen Geräten bitte „Cloud-Daten laden“ wählen.')}catch(e){notice(e.message)}}
 try{session=JSON.parse(sessionStorage.getItem('wp-session')||'null')}catch{};
 if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
-render();
-
-
-const originalProductModal = productModal;
-
-productModal = function(p) {
-  originalProductModal(p);
-
-  const dialog = document.getElementById('dialogContent');
-  const form = dialog.querySelector('#productForm');
-  if (!form) return;
-
-  for (const name of ['sku', 'barcode']) {
-    const input = form.querySelector(`[name="${name}"]`);
-    if (input) {
-      const wrapper = input.closest('label');
-      if (wrapper) wrapper.style.display = 'none';
-      else input.style.display = 'none';
-    }
-  }
-
-  dialog.querySelectorAll('button').forEach(button => {
-    if (button.textContent.includes('Barcode scannen')) {
-      button.style.display = 'none';
-    }
-  });
-};
-  const bisherigesArtikelFenster = productModal;
-
-productModal = function(p) {
-  bisherigesArtikelFenster(p);
-
-  const feld = [...document.querySelectorAll('#productForm input')]
-  .find(x => x.name === 'Kaufjahr' || x.id === 'Kaufjahr' || x.closest('label')?.textContent.includes('Kaufjahr'));
-
-  if (!feld) return;
-
-  const auswahl = document.createElement('select');
-  auswahl.name = feld.name;
-
-  const aktuell = new Date().getFullYear();
-  const wert = feld.value || String(aktuell);
-
-  for (let jahr = 2024; jahr <= Math.max(aktuell + 5, Number(wert)); jahr++) {
-    const option = document.createElement('option');
-    option.value = String(jahr);
-    option.textContent = String(jahr);
-    option.selected = String(jahr) === wert;
-    auswahl.appendChild(option);
-  }
-
-  feld.replaceWith(auswahl);
-};
-const bisherigesPreisFenster = productModal;
-
-productModal = function(p) {
-  bisherigesPreisFenster(p);
-
-  const formular = document.getElementById('productForm');
-  const preis = formular?.querySelector('[name="price"]');
-  const beschriftung = preis?.closest('label');
-
-  if (beschriftung) {
-    const text = [...beschriftung.childNodes].find(
-      n => n.nodeType === 3 && n.textContent.includes('Einzelpreis')
-    );
-    if (text) text.textContent = text.textContent.replace('Einzelpreis', 'Gesamtpreis');
-  }
-};
-delete headings.movements;
 render();
