@@ -166,3 +166,6 @@ pages.dashboard = function() {
 
 render();
 
+delete headings.movements;
+pages.dashboard = alteUebersicht;
+render();
