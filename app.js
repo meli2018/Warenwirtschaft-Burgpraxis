@@ -35,7 +35,7 @@ const sel=(name,label,opts,chosen='')=>`<label>${esc(label)}<select name="${esc(
 const opt=a=>a.map(x=>({value:x.id,label:x.name}));
 function formData(form){return Object.fromEntries(new FormData(form).entries())}
 function button(text,act,cl='secondary'){return `<button class="${cl}" data-action="${act}">${text}</button>`}
-const headings={dashboard:'Übersicht',products:'Artikel',movements:'Buchungen',consumption:'Jahresverbrauch',reports:'Auswertungen',designer:'Gestalten',settings:'Einstellungen'};
+const headings={dashboard:'Übersicht',products:'Artikel',movements:'Buchungen',reports:'Auswertungen',designer:'Gestalten',settings:'Einstellungen'};
 function render(){document.getElementById('nav').innerHTML=Object.entries(headings).map(([k,v])=>`<button data-page="${k}" class="${page===k?'active':''}">${v}</button>`).join('');document.getElementById('app').innerHTML=pages[page]();}
 const pages={
  dashboard(){
@@ -58,44 +58,7 @@ const pages={
         <div class="metric">${money(jahreswert)}</div>
       </div>
     </div>
-    <div class="card"><h2>Schnellzugriff</h2><div class="actions">${button('Jahresverbrauch','consumption-page')}${button('Daten exportieren','export-json')}</div></div>`;
- },
-
- consumption(){
-  const currentYear=new Date().getFullYear();
-  const storedYear=Number(sessionStorage.getItem('burgpraxis-usage-year')||currentYear);
-  const year=Number.isInteger(storedYear)&&storedYear>=2000&&storedYear<=2100?storedYear:currentYear;
-  const allYears=[year,currentYear+1,...(db.annualUsage||[]).map(x=>Number(x.year)),...(db.usageLog||[]).map(x=>Number(x.year))];
-  const maxYear=Math.min(2100,Math.max(...allYears.filter(Number.isFinite),2025));
-  const firstYear=Math.min(2024,year);
-  const years=Array.from({length:maxYear-firstYear+1},(_,i)=>firstYear+i);
-  const requestedId=sessionStorage.getItem('burgpraxis-usage-product')||'';
-  const selected=db.products.find(p=>String(p.id)===requestedId)||db.products[0];
-  const items=db.products.map(p=>({value:p.id,label:p.name}));
-  const manual=(db.annualUsage||[]).filter(x=>String(x.productId)===String(selected?.id)&&Number(x.year)===year);
-  const automatic=(db.usageLog||[]).filter(x=>String(x.productId)===String(selected?.id)&&Number(x.year)===year);
-  const totals={stück:0,packung:0};
-  for(const entry of [...manual,...automatic]){
-    const unit=String(entry.unit||'stück').toLowerCase();
-    if(unit in totals)totals[unit]+=Number(entry.quantity)||0;
-  }
-  const amounts=Object.entries(totals).filter(([unit,n])=>n!==0||(manual.some(x=>x.unit===unit)||automatic.some(x=>x.unit===unit)));
-  const display=amounts.map(([unit,n])=>esc(n)+' '+(unit==='packung'?(n===1?'Packung':'Packungen'):'Stück')).join(' und ');
-  const savedForYear=manual.length+automatic.length>0;
-  const chosenUnit=String(selected?.stockUnit||'stück').toLowerCase()==='packung'?'packung':'stück';
-  const manualCurrent=manual.find(x=>x.unit===chosenUnit);
-  return '<div class="toolbar"><h1>Jahresverbrauch</h1></div>'+
-    '<div class="card"><label>Jahr<select id="usageYear">'+years.map(y=>'<option value="'+y+'" '+(year===y?'selected':'')+'>'+y+'</option>').join('')+'</select></label>'+
-    '<label>Artikel<select id="usageProduct">'+sel('unused','unused',items,selected?.id).match(/<select[^>]*>([\s\S]*?)<\/select>/)?.[1]+'</select></label></div>'+
-    '<div class="card"><h2>Verbrauch '+year+'</h2>'+
-    (selected?(savedForYear?'<div class="metric">'+display+'</div>':'<p class="muted">Für diesen Artikel sind in '+year+' noch keine Verbrauchsdaten gespeichert.</p>'):
-      '<p class="muted">Bitte zuerst einen Artikel anlegen.</p>')+
-    '<p class="muted">Bestandsabnahmen werden ab dieser Version erfasst. Frühere Jahre können nicht automatisch aus dem heutigen Bestand berechnet werden.</p></div>'+
-    (selected?'<div class="card"><h2>Älteren Jahresverbrauch nachtragen</h2><p class="muted">Nur wenn du die tatsächlich verbrauchte Menge kennst. Das ändert den Lagerbestand nicht.</p>'+
-      '<form id="usageBackfillForm" class="fields"><input type="hidden" name="year" value="'+year+'"><input type="hidden" name="productId" value="'+esc(selected.id)+'">'+
-      '<label>Einheit<select name="unit"><option value="stück" '+(chosenUnit==='stück'?'selected':'')+'>Stück</option><option value="packung" '+(chosenUnit==='packung'?'selected':'')+'>Packungen</option></select></label>'+
-      '<label>Verbrauchsmenge für '+year+'<input name="quantity" type="number" min="0" step="1" inputmode="numeric" value="'+esc(manualCurrent?.quantity??'')+'" required></label>'+
-      '<button type="submit">Jahreswert speichern</button></form></div>':'');
+    <div class="card"><h2>Schnellzugriff</h2><div class="actions">${button('Einkäufe pro Artikel','purchases-page')}${button('Daten exportieren','export-json')}</div></div>`;
  },
 
  products(){return `<div class="toolbar"><h1>Artikel</h1>${button('+ Artikel erstellen','new-product','')}</div><div class="card"><label>Artikel suchen<input id="search" placeholder="Name, SKU, Barcode ..."></label></div><div class="card scroll"><table><thead><tr><th>Artikel</th><th>SKU / Barcode</th><th>Kategorie</th><th>Bestand</th><th>Preis</th><th>Aktionen</th></tr></thead><tbody id="productRows">${productRows()}</tbody></table></div>`},
@@ -187,19 +150,9 @@ function saveProductDirect(f){
     if(!Number.isInteger(neuerBestand)||neuerBestand<0)
       throw Error('Bitte bei '+activeField.label+' eine ganze Zahl ab 0 eingeben.');
   }
-  const previousQuantity=p?qty(p.id):null;
-  const previousUnit=String(p?.stockUnit||kind).toLowerCase();
-  const hadDirectQuantity=p&&p.stock!==undefined&&p.stock!==null&&p.stock!=='';
   const data={id:p?.id||id(),name,sku:v.sku,barcode:v.barcode,category:v.category,price,custom};
   if(neuerBestand!==null){data.stock=neuerBestand;data.stockUnit=kind;}
   if(p)Object.assign(p,data);else db.products.push(data);
-  // Nur spätere Mengenreduzierungen bei derselben Einheit als Verbrauch erfassen.
-  // Erstmaliges Anlegen und die Übernahme alter Bestände zählen nicht als Verbrauch.
-  if(hadDirectQuantity&&neuerBestand!==null&&kind===previousUnit&&neuerBestand<previousQuantity){
-    if(!Array.isArray(db.usageLog))db.usageLog=[];
-    db.usageLog.push({id:id(),productId:data.id,year:new Date().getFullYear(),
-      date:new Date().toISOString(),unit:kind,quantity:previousQuantity-neuerBestand});
-  }
   close();
   save();
     const gespeichert=db.products.find(x=>String(x.id)===String(v.id))||db.products[db.products.length-1];
@@ -209,33 +162,15 @@ function saveProductDirect(f){
     notice('Artikel konnte nicht gespeichert werden: '+err.message);
   }
 }
-function handleAction(a){let [cmd,arg]=a.split(':');if(cmd==='save-product'){saveProductDirect();return;}if(cmd==='consumption-page'){page='consumption';render();return;}if(cmd==='new-product')productModal();if(cmd==='edit-product')productModal(db.products.find(p=>p.id===arg));if(cmd==='book-product')movementModal(arg);if(cmd==='new-movement')movementModal();if(cmd==='inventory-page'){page='inventory';render()}if(cmd==='new-warehouse'||cmd==='edit-warehouse'){let w=db.warehouses.find(x=>x.id===arg);modal(`<h2>Lagerort</h2><form id="warehouseForm" class="fields"><input name="id" value="${esc(w?.id||'')}" hidden>${field('name','Name',w?.name||'','text',true)}<button>Speichern</button></form>`)}if(cmd==='new-category')modal(`<h2>Kategorie hinzufügen</h2><form id="categoryForm" class="fields">${field('name','Name','','text',true)}<button>Speichern</button></form>`);if(cmd==='new-field')modal(`<h2>Eigenes Artikelfeld</h2><form id="fieldForm" class="fields">${field('label','Feldbezeichnung','','text',true)}${sel('type','Typ',[{value:'text',label:'Text'},{value:'number',label:'Zahl'},{value:'date',label:'Datum'}])}<button>Hinzufügen</button></form>`);if(cmd==='delete-field'){if(confirm('Feld und gespeicherte Feldwerte entfernen?')){db.fields=db.fields.filter(f=>f.id!==arg);db.products.forEach(p=>delete p.custom[arg]);save()}}if(cmd==='new-view')modal(`<h2>Neue Tabellenansicht</h2><form id="viewForm" class="fields">${field('name','Ansichtsname','','text',true)}${['name','sku','barcode','category','price','stock'].map(x=>`<label><input type="checkbox" name="columns" value="${x}" checked> ${x}</label>`).join('')}<button>Ansicht speichern</button></form>`);if(cmd==='view'){let v=db.views.find(x=>x.id===arg);modal(`<h2>${esc(v.name)}</h2><div class="scroll"><table><tr>${v.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${db.products.map(p=>`<tr>${v.columns.map(c=>`<td>${esc(c==='stock'?qty(p.id):p[c])}</td>`).join('')}</tr>`).join('')}</table></div>`)}if(cmd==='delete-view'){db.views=db.views.filter(v=>v.id!==arg);save()}if(cmd==='new-workflow')modal(`<h2>Buchungsvorlage</h2><form id="workflowForm" class="fields">${field('name','Name (z. B. Retoure)','','text',true)}${field('delta','Standardmenge (+ / −)',1,'number',true)}<button>Speichern</button></form>`);if(cmd==='run-workflow'){let w=db.workflows.find(x=>x.id===arg);movementModal('',w.delta)}if(cmd==='delete-workflow'){db.workflows=db.workflows.filter(w=>w.id!==arg);save()}if(cmd==='delete-product'){if(confirm('Artikel löschen? Frühere Buchungen bleiben im Protokoll.')){db.products=db.products.filter(p=>p.id!==arg);close();save()}}if(cmd.startsWith('export-'))exportFile(cmd.slice(7));if(cmd==='import-json')document.getElementById('importFile').click();if(cmd==='scan')startScan();if(cmd==='cloud-pull')cloudPull();if(cmd==='cloud-push')cloudPush();if(cmd==='logout'){session=null;sessionStorage.removeItem('wp-session');render()}}
+function handleAction(a){let [cmd,arg]=a.split(':');if(cmd==='save-product'){saveProductDirect();return;}if(cmd==='purchases-page'){page='ausgaben';render();return;}if(cmd==='new-product')productModal();if(cmd==='edit-product')productModal(db.products.find(p=>p.id===arg));if(cmd==='book-product')movementModal(arg);if(cmd==='new-movement')movementModal();if(cmd==='inventory-page'){page='inventory';render()}if(cmd==='new-warehouse'||cmd==='edit-warehouse'){let w=db.warehouses.find(x=>x.id===arg);modal(`<h2>Lagerort</h2><form id="warehouseForm" class="fields"><input name="id" value="${esc(w?.id||'')}" hidden>${field('name','Name',w?.name||'','text',true)}<button>Speichern</button></form>`)}if(cmd==='new-category')modal(`<h2>Kategorie hinzufügen</h2><form id="categoryForm" class="fields">${field('name','Name','','text',true)}<button>Speichern</button></form>`);if(cmd==='new-field')modal(`<h2>Eigenes Artikelfeld</h2><form id="fieldForm" class="fields">${field('label','Feldbezeichnung','','text',true)}${sel('type','Typ',[{value:'text',label:'Text'},{value:'number',label:'Zahl'},{value:'date',label:'Datum'}])}<button>Hinzufügen</button></form>`);if(cmd==='delete-field'){if(confirm('Feld und gespeicherte Feldwerte entfernen?')){db.fields=db.fields.filter(f=>f.id!==arg);db.products.forEach(p=>delete p.custom[arg]);save()}}if(cmd==='new-view')modal(`<h2>Neue Tabellenansicht</h2><form id="viewForm" class="fields">${field('name','Ansichtsname','','text',true)}${['name','sku','barcode','category','price','stock'].map(x=>`<label><input type="checkbox" name="columns" value="${x}" checked> ${x}</label>`).join('')}<button>Ansicht speichern</button></form>`);if(cmd==='view'){let v=db.views.find(x=>x.id===arg);modal(`<h2>${esc(v.name)}</h2><div class="scroll"><table><tr>${v.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${db.products.map(p=>`<tr>${v.columns.map(c=>`<td>${esc(c==='stock'?qty(p.id):p[c])}</td>`).join('')}</tr>`).join('')}</table></div>`)}if(cmd==='delete-view'){db.views=db.views.filter(v=>v.id!==arg);save()}if(cmd==='new-workflow')modal(`<h2>Buchungsvorlage</h2><form id="workflowForm" class="fields">${field('name','Name (z. B. Retoure)','','text',true)}${field('delta','Standardmenge (+ / −)',1,'number',true)}<button>Speichern</button></form>`);if(cmd==='run-workflow'){let w=db.workflows.find(x=>x.id===arg);movementModal('',w.delta)}if(cmd==='delete-workflow'){db.workflows=db.workflows.filter(w=>w.id!==arg);save()}if(cmd==='delete-product'){if(confirm('Artikel löschen? Frühere Buchungen bleiben im Protokoll.')){db.products=db.products.filter(p=>p.id!==arg);close();save()}}if(cmd.startsWith('export-'))exportFile(cmd.slice(7));if(cmd==='import-json')document.getElementById('importFile').click();if(cmd==='scan')startScan();if(cmd==='cloud-pull')cloudPull();if(cmd==='cloud-push')cloudPush();if(cmd==='logout'){session=null;sessionStorage.removeItem('wp-session');render()}}
 document.addEventListener('click',e=>{let b=e.target.closest('[data-page],[data-action]');if(!b)return;if(b.dataset.page){page=b.dataset.page;render()}else handleAction(b.dataset.action)});
 document.addEventListener('input',e=>{
   const unit=e.target?.dataset?.stockKind;
   if(unit&&e.target.closest('#productForm'))e.target.closest('#productForm').dataset.stockKind=unit;
 });
 document.addEventListener('input',e=>{if(e.target.id==='search')document.getElementById('productRows').innerHTML=productRows(e.target.value)});
-document.addEventListener('change',e=>{
-  if(e.target.id==='usageYear'){
-    sessionStorage.setItem('burgpraxis-usage-year',e.target.value);
-    render();
-  }else if(e.target.id==='usageProduct'){
-    sessionStorage.setItem('burgpraxis-usage-product',e.target.value);
-    render();
-  }
-});
-document.addEventListener('submit',async e=>{const f=e.target;const formId=f.getAttribute('id');if(!formId)return;e.preventDefault();let v=formData(f);try{if(formId==='productForm'){saveProductDirect(f);return;}if(formId==='usageBackfillForm'){
-  const year=Number(v.year),amount=Number(v.quantity),unit=String(v.unit);
-  if(!Number.isInteger(year)||year<2000||year>2100||!Number.isInteger(amount)||amount<0||String(v.quantity).trim()===''||!['stück','packung'].includes(unit))
-    throw Error('Bitte ein gültiges Jahr und eine ganze Verbrauchsmenge ab 0 eingeben.');
-  if(!db.products.some(p=>String(p.id)===String(v.productId)))throw Error('Artikel nicht gefunden.');
-  if(!Array.isArray(db.annualUsage))db.annualUsage=[];
-  const previous=db.annualUsage.find(x=>String(x.productId)===String(v.productId)&&Number(x.year)===year&&x.unit===unit);
-  if(previous)previous.quantity=amount;
-  else db.annualUsage.push({productId:v.productId,year,unit,quantity:amount});
-  save();notice('Jahresverbrauch gespeichert.');return;
-}if(formId==='warehouseForm'){let w=db.warehouses.find(x=>x.id===v.id);if(w)w.name=v.name;else db.warehouses.push({id:id(),name:v.name});close();save()}if(formId==='categoryForm'){if(!db.categories.includes(v.name))db.categories.push(v.name);close();save()}if(formId==='fieldForm'){db.fields.push({id:id(),label:v.label,type:v.type});close();save()}if(formId==='viewForm'){db.views.push({id:id(),name:v.name,columns:[...new FormData(f).getAll('columns')]});close();save()}if(formId==='workflowForm'){db.workflows.push({id:id(),name:v.name,delta:Number(v.delta)});close();save()}if(formId==='movementForm'){addMovement(v);close();save()}if(formId==='inventoryForm'){
+
+document.addEventListener('submit',async e=>{const f=e.target;const formId=f.getAttribute('id');if(!formId)return;e.preventDefault();let v=formData(f);try{if(formId==='productForm'){saveProductDirect(f);return;}if(formId==='warehouseForm'){let w=db.warehouses.find(x=>x.id===v.id);if(w)w.name=v.name;else db.warehouses.push({id:id(),name:v.name});close();save()}if(formId==='categoryForm'){if(!db.categories.includes(v.name))db.categories.push(v.name);close();save()}if(formId==='fieldForm'){db.fields.push({id:id(),label:v.label,type:v.type});close();save()}if(formId==='viewForm'){db.views.push({id:id(),name:v.name,columns:[...new FormData(f).getAll('columns')]});close();save()}if(formId==='workflowForm'){db.workflows.push({id:id(),name:v.name,delta:Number(v.delta)});close();save()}if(formId==='movementForm'){addMovement(v);close();save()}if(formId==='inventoryForm'){
   const gezählt=Number(v.count),produkt=db.products.find(p=>String(p.id)===String(v.productId));
   if(!produkt||!Number.isInteger(gezählt)||gezählt<0)throw Error('Bitte gültige Stückzahl eingeben.');
   const ist=qty(v.productId,v.warehouseId),delta=gezählt-ist;
