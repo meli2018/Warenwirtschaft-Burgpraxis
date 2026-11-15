@@ -1,10 +1,23 @@
 'use strict';
 const KEY='warenpilot-data-v1',CFG='warenpilot-cloud-v1';
 const blank=()=>({products:[],warehouses:[{id:'main',name:'Hauptlager'}],categories:['Allgemein'],fields:[],movements:[],views:[],workflows:[],usageLog:[],annualUsage:[]});
-let db=load(), page='dashboard',config=JSON.parse(localStorage.getItem(CFG)||'{}'),session=null,scanStream=null;
+const CLOUD_URL='https://gkuqlmowzpvklhdkblpl.supabase.co';
+const CLOUD_KEY="sb_publishable_jU8rAk-DsuRUDJAwy7sGwA_rdyRt8EI"; // Öffentlicher, für Browser vorgesehener Supabase-Schlüssel.
+let db=load(),page='dashboard',config={url:CLOUD_URL,key:CLOUD_KEY},session=null,scanStream=null;
+let shared=null,shareDirty=false,shareBusy=false,shareConflict=false,shareStarting=false;
 function load(){try{return {...blank(),...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch{return blank()}}
 const id=()=>crypto.randomUUID(),esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function save(){localStorage.setItem(KEY,JSON.stringify(db));document.getElementById('syncState').textContent=session?'Ungesendet · synchronisieren':'Lokal gespeichert';render()}
+function save(){
+  localStorage.setItem(KEY,JSON.stringify(db));
+  if(shared){
+    shareDirty=true;
+    document.getElementById('syncState').textContent='Gemeinsam · Speichern …';
+    void flushShared();
+  }else{
+    document.getElementById('syncState').textContent='Lokal gespeichert';
+  }
+  render();
+}
 function modal(html){document.getElementById('dialogContent').innerHTML=html;document.getElementById('dialog').showModal()}
 function close(){stopScan();document.getElementById('dialog').close()}
 function notice(s){alert(s)}
@@ -67,7 +80,39 @@ const pages={
  inventory(){return `<div class="toolbar"><h1>Inventur</h1></div><div class="notice">Eine Inventur setzt den gezählten Bestand durch eine nachvollziehbare Korrekturbuchung.</div><div class="card"><form id="inventoryForm" class="fields">${sel('productId','Artikel',opt(db.products))}${sel('warehouseId','Lagerort',opt(db.warehouses))}${field('count','Gezählte Menge',0,'number',true)}<button>Bestand korrigieren</button></form></div>`},
  reports(){return `<div class="toolbar"><h1>Auswertungen & Export</h1><div class="actions">${button('Artikel-CSV','export-products')}${button('Vollständige Sicherung (JSON)','export-json','')}</div></div><div class="card scroll"><h2>Bestände nach Artikel</h2><table><tr><th>Artikel</th><th>Bestand</th><th>Warenwert</th></tr>${db.products.map(p=>`<tr><td>${esc(p.name)}</td><td>${qty(p.id)}</td><td>${money(qty(p.id)*Number(p.price||0))}</td></tr>`).join('')}</table></div>`},
  designer(){return `<div class="toolbar"><h1>Selbst gestalten</h1></div><div class="two"><div class="card"><h2>Kategorien</h2><div class="actions">${db.categories.map(c=>`<span class="pill">${esc(c)}</span>`).join('')}</div><p>${button('+ Kategorie','new-category')}</p></div><div class="card"><h2>Eigene Artikelfelder</h2>${db.fields.map(f=>`<p>${esc(f.label)} <span class="pill">${esc(f.type)}</span> ${button('Löschen','delete-field:'+f.id)}</p>`).join('')}<p>${button('+ Feld','new-field')}</p></div><div class="card"><h2>Eigene Tabellenansichten</h2><p class="muted">Wähle sichtbare Artikelspalten.</p>${db.views.map(v=>`<p>${esc(v.name)} ${button('Öffnen','view:'+v.id)} ${button('Löschen','delete-view:'+v.id)}</p>`).join('')}${button('+ Ansicht','new-view')}</div><div class="card"><h2>Eigene Arbeitsabläufe</h2><p class="muted">Lege Buchungsvorlagen an, z. B. „Retoure“ oder „Verkauf“.</p>${db.workflows.map(w=>`<p>${esc(w.name)} (${w.delta>0?'+':''}${w.delta}) ${button('Ausführen','run-workflow:'+w.id)} ${button('Löschen','delete-workflow:'+w.id)}</p>`).join('')}${button('+ Ablauf','new-workflow')}</div></div>`},
- settings(){return `<div class="toolbar"><h1>Einstellungen & Synchronisierung</h1></div><div class="notice">Cloud ist optional. Daten liegen zunächst lokal auf diesem Gerät. Bei Synchronisierung gilt: Letzte Speicherung gewinnt. Gleichzeitige Änderungen auf mehreren Geräten können sich überschreiben.</div><div class="card"><h2>Supabase-Verbindung</h2><form id="cloudConfig" class="fields">${field('url','Projekt-URL (https://...supabase.co)',config.url||'','url',true)}${field('key','Publishable / anon key (niemals service_role!)',config.key||'','text',true)}<button>Verbindung speichern</button></form><p class="muted">Das Konto gehört dir. Keine Zugangsdaten in den Quellcode schreiben. Die SQL-Datei im Paket aktiviert Zugriffsschutz pro Benutzer.</p></div><div class="card"><h2>${session?'Angemeldet':'Anmelden / Konto erstellen'}</h2>${session?`<p>${esc(session.user.email)}</p><div class="actions">${button('Cloud-Daten laden','cloud-pull')}${button('Lokale Daten hochladen','cloud-push','')}${button('Abmelden','logout')}</div>`:`<form id="authForm" class="fields">${field('email','E-Mail','','email',true)}${field('password','Passwort (mindestens 6 Zeichen)','','password',true)}<div class="actions"><button name="mode" value="login">Anmelden</button><button name="mode" value="signup" class="secondary">Konto erstellen</button></div></form>`}</div><div class="card"><h2>Datensicherung</h2><div class="actions">${button('JSON exportieren','export-json')}${button('JSON importieren','import-json')}</div><input type="file" id="importFile" accept=".json,application/json" hidden><p class="muted">Vor einem Gerätewechsel zuerst exportieren oder synchronisieren.</p></div>`}
+ settings(){
+  const invitation=inviteFromUrl();
+  return `<div class="toolbar"><h1>Einstellungen</h1></div>
+    <div class="card">
+      <h2>Gemeinsame Burgpraxis 💙</h2>
+      <p>${shared?'Verbunden mit der gemeinsamen Burgpraxis. Änderungen werden automatisch gesichert.':'Deine Artikel sind weiterhin auf deinem Handy gespeichert, bis du die gemeinsame Burgpraxis selbst startest.'}</p>
+      ${!session?'<p>Bitte einmal anmelden. Danach bleibt dein Zugang gespeichert.</p>':''}
+      ${session?'<p class="muted">Angemeldet: '+esc(session.user?.email||'')+'</p>':''}
+      ${session&&shared?'<p class="muted">Status: '+(shareConflict?'Änderungen müssen geprüft werden':shareDirty?'Lokale Änderungen noch nicht synchronisiert':'Gemeinsam synchronisiert')+'</p>':''}
+      <div class="actions">
+        ${session&&!shared&&!invitation?button('Gemeinsam starten','shared-start'):''}
+        ${session&&shared&&String(shared.ownerId)===String(session.user?.id)?button('Partner einladen','shared-invite'):''}
+        ${session&&invitation&&!shared?button('Einladung annehmen','shared-join'):''}
+        ${session&&shared?button('Aktuellen Stand laden','shared-reload'):''}
+      </div>
+      ${invitation&&!shared?'<p>Du hast einen Einladungslink erhalten. Melde dich mit deinem eigenen Konto an und tippe auf „Einladung annehmen“.</p>':''}
+      ${shareConflict?'<p>Die andere Person hat zwischenzeitlich etwas geändert. Deine lokalen Änderungen wurden NICHT überschrieben. Bitte zuerst JSON exportieren, bevor du die neuesten Cloud-Daten lädst.</p>':''}
+      <p class="muted">Bei gleichzeitiger Bearbeitung werden Änderungen nicht heimlich überschrieben. Falls ein Konflikt entsteht, bleibt deine lokale Version erhalten.</p>
+    </div>
+    ${session?'':`<div class="card"><h2>Anmelden oder Konto erstellen</h2>
+      <form id="authForm" class="fields">
+        ${field('email','E-Mail','','email',true)}
+        ${field('password','Passwort (mindestens 6 Zeichen)','','password',true)}
+        <div class="actions"><button name="mode" value="login">Anmelden</button><button name="mode" value="signup" class="secondary">Konto erstellen</button></div>
+      </form>
+      <p class="muted">Bei der ersten Anmeldung kann eine Bestätigung per E-Mail nötig sein.</p>
+    </div>`}
+    ${session?`<div class="card"><div class="actions">${button('Abmelden','logout')}</div></div>`:''}
+    <div class="card"><h2>Datensicherung</h2><div class="actions">
+      ${button('JSON exportieren','export-json')}${button('JSON importieren','import-json')}
+    </div><input type="file" id="importFile" accept=".json,application/json" hidden>
+    <p class="muted">Eine JSON-Sicherung ist auch mit gemeinsamer Cloud sinnvoll. Ein Import ersetzt nur auf ausdrückliche Bestätigung gespeicherte Daten.</p></div>`;
+ }
 };
 function productRows(search=''){return db.products.filter(p=>[p.name,p.sku,p.barcode].join(' ').toLowerCase().includes(search.toLowerCase())).map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${esc(p.sku)}<br><small>${esc(p.barcode)}</small></td><td>${esc(p.category)}</td><td>${qty(p.id)}</td><td>${money(p.price)}</td><td>${button('Bearbeiten','edit-product:'+p.id)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">Keine Artikel vorhanden</td></tr>'}
 function movementTable(arr){return `<table><tr><th>Datum</th><th>Artikel</th><th>Lager</th><th>Menge</th><th>Grund</th></tr>${arr.map(m=>`<tr><td>${esc(new Date(m.date).toLocaleString('de-DE'))}</td><td>${esc(db.products.find(p=>p.id===m.productId)?.name||'Gelöscht')}</td><td>${esc(db.warehouses.find(w=>w.id===m.warehouseId)?.name||'Gelöscht')}</td><td>${m.delta>0?'+':''}${m.delta}</td><td>${esc(m.reason)}</td></tr>`).join('')}</table>`}
@@ -162,7 +207,11 @@ function saveProductDirect(f){
     notice('Artikel konnte nicht gespeichert werden: '+err.message);
   }
 }
-function handleAction(a){let [cmd,arg]=a.split(':');if(cmd==='save-product'){saveProductDirect();return;}if(cmd==='purchases-page'){page='ausgaben';render();return;}if(cmd==='new-product')productModal();if(cmd==='edit-product')productModal(db.products.find(p=>p.id===arg));if(cmd==='book-product')movementModal(arg);if(cmd==='new-movement')movementModal();if(cmd==='inventory-page'){page='inventory';render()}if(cmd==='new-warehouse'||cmd==='edit-warehouse'){let w=db.warehouses.find(x=>x.id===arg);modal(`<h2>Lagerort</h2><form id="warehouseForm" class="fields"><input name="id" value="${esc(w?.id||'')}" hidden>${field('name','Name',w?.name||'','text',true)}<button>Speichern</button></form>`)}if(cmd==='new-category')modal(`<h2>Kategorie hinzufügen</h2><form id="categoryForm" class="fields">${field('name','Name','','text',true)}<button>Speichern</button></form>`);if(cmd==='new-field')modal(`<h2>Eigenes Artikelfeld</h2><form id="fieldForm" class="fields">${field('label','Feldbezeichnung','','text',true)}${sel('type','Typ',[{value:'text',label:'Text'},{value:'number',label:'Zahl'},{value:'date',label:'Datum'}])}<button>Hinzufügen</button></form>`);if(cmd==='delete-field'){if(confirm('Feld und gespeicherte Feldwerte entfernen?')){db.fields=db.fields.filter(f=>f.id!==arg);db.products.forEach(p=>delete p.custom[arg]);save()}}if(cmd==='new-view')modal(`<h2>Neue Tabellenansicht</h2><form id="viewForm" class="fields">${field('name','Ansichtsname','','text',true)}${['name','sku','barcode','category','price','stock'].map(x=>`<label><input type="checkbox" name="columns" value="${x}" checked> ${x}</label>`).join('')}<button>Ansicht speichern</button></form>`);if(cmd==='view'){let v=db.views.find(x=>x.id===arg);modal(`<h2>${esc(v.name)}</h2><div class="scroll"><table><tr>${v.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${db.products.map(p=>`<tr>${v.columns.map(c=>`<td>${esc(c==='stock'?qty(p.id):p[c])}</td>`).join('')}</tr>`).join('')}</table></div>`)}if(cmd==='delete-view'){db.views=db.views.filter(v=>v.id!==arg);save()}if(cmd==='new-workflow')modal(`<h2>Buchungsvorlage</h2><form id="workflowForm" class="fields">${field('name','Name (z. B. Retoure)','','text',true)}${field('delta','Standardmenge (+ / −)',1,'number',true)}<button>Speichern</button></form>`);if(cmd==='run-workflow'){let w=db.workflows.find(x=>x.id===arg);movementModal('',w.delta)}if(cmd==='delete-workflow'){db.workflows=db.workflows.filter(w=>w.id!==arg);save()}if(cmd==='delete-product'){if(confirm('Artikel löschen? Frühere Buchungen bleiben im Protokoll.')){db.products=db.products.filter(p=>p.id!==arg);close();save()}}if(cmd.startsWith('export-'))exportFile(cmd.slice(7));if(cmd==='import-json')document.getElementById('importFile').click();if(cmd==='scan')startScan();if(cmd==='cloud-pull')cloudPull();if(cmd==='cloud-push')cloudPush();if(cmd==='logout'){session=null;sessionStorage.removeItem('wp-session');render()}}
+function handleAction(a){let [cmd,arg]=a.split(':');if(cmd==='save-product'){saveProductDirect();return;}
+  if(cmd==='shared-start'){void startShared();return;}
+  if(cmd==='shared-invite'){void createInvite();return;}
+  if(cmd==='shared-join'){void joinShared();return;}
+  if(cmd==='shared-reload'){void loadShared(true);return;}if(cmd==='purchases-page'){page='ausgaben';render();return;}if(cmd==='new-product')productModal();if(cmd==='edit-product')productModal(db.products.find(p=>p.id===arg));if(cmd==='book-product')movementModal(arg);if(cmd==='new-movement')movementModal();if(cmd==='inventory-page'){page='inventory';render()}if(cmd==='new-warehouse'||cmd==='edit-warehouse'){let w=db.warehouses.find(x=>x.id===arg);modal(`<h2>Lagerort</h2><form id="warehouseForm" class="fields"><input name="id" value="${esc(w?.id||'')}" hidden>${field('name','Name',w?.name||'','text',true)}<button>Speichern</button></form>`)}if(cmd==='new-category')modal(`<h2>Kategorie hinzufügen</h2><form id="categoryForm" class="fields">${field('name','Name','','text',true)}<button>Speichern</button></form>`);if(cmd==='new-field')modal(`<h2>Eigenes Artikelfeld</h2><form id="fieldForm" class="fields">${field('label','Feldbezeichnung','','text',true)}${sel('type','Typ',[{value:'text',label:'Text'},{value:'number',label:'Zahl'},{value:'date',label:'Datum'}])}<button>Hinzufügen</button></form>`);if(cmd==='delete-field'){if(confirm('Feld und gespeicherte Feldwerte entfernen?')){db.fields=db.fields.filter(f=>f.id!==arg);db.products.forEach(p=>delete p.custom[arg]);save()}}if(cmd==='new-view')modal(`<h2>Neue Tabellenansicht</h2><form id="viewForm" class="fields">${field('name','Ansichtsname','','text',true)}${['name','sku','barcode','category','price','stock'].map(x=>`<label><input type="checkbox" name="columns" value="${x}" checked> ${x}</label>`).join('')}<button>Ansicht speichern</button></form>`);if(cmd==='view'){let v=db.views.find(x=>x.id===arg);modal(`<h2>${esc(v.name)}</h2><div class="scroll"><table><tr>${v.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${db.products.map(p=>`<tr>${v.columns.map(c=>`<td>${esc(c==='stock'?qty(p.id):p[c])}</td>`).join('')}</tr>`).join('')}</table></div>`)}if(cmd==='delete-view'){db.views=db.views.filter(v=>v.id!==arg);save()}if(cmd==='new-workflow')modal(`<h2>Buchungsvorlage</h2><form id="workflowForm" class="fields">${field('name','Name (z. B. Retoure)','','text',true)}${field('delta','Standardmenge (+ / −)',1,'number',true)}<button>Speichern</button></form>`);if(cmd==='run-workflow'){let w=db.workflows.find(x=>x.id===arg);movementModal('',w.delta)}if(cmd==='delete-workflow'){db.workflows=db.workflows.filter(w=>w.id!==arg);save()}if(cmd==='delete-product'){if(confirm('Artikel löschen? Frühere Buchungen bleiben im Protokoll.')){db.products=db.products.filter(p=>p.id!==arg);close();save()}}if(cmd.startsWith('export-'))exportFile(cmd.slice(7));if(cmd==='import-json')document.getElementById('importFile').click();if(cmd==='scan')startScan();if(cmd==='cloud-pull')cloudPull();if(cmd==='cloud-push')cloudPush();if(cmd==='logout'){session=null;shared=null;shareDirty=false;shareConflict=false;sessionStorage.removeItem('wp-session');document.getElementById('syncState').textContent='Lokal';render()}}
 document.addEventListener('click',e=>{let b=e.target.closest('[data-page],[data-action]');if(!b)return;if(b.dataset.page){page=b.dataset.page;render()}else handleAction(b.dataset.action)});
 document.addEventListener('input',e=>{
   const unit=e.target?.dataset?.stockKind;
@@ -186,10 +235,185 @@ document.addEventListener('change',async e=>{if(e.target.id==='importFile'){let 
 async function startScan(){if(!('BarcodeDetector'in window)||!navigator.mediaDevices?.getUserMedia){notice('Kamera-Barcode-Erkennung wird hier nicht unterstützt. Barcode bitte manuell eingeben.');return}try{scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});let box=document.getElementById('scanner');box.innerHTML='<video autoplay playsinline muted></video><p class="muted">Barcode vor die Kamera halten.</p>';let video=box.querySelector('video');video.srcObject=scanStream;let detector=new BarcodeDetector();let active=scanStream;async function tick(){if(scanStream!==active)return;try{let codes=await detector.detect(video);if(codes.length){document.querySelector('[name=barcode]').value=codes[0].rawValue;stopScan();box.textContent='Code erkannt: '+codes[0].rawValue;return}}catch{}setTimeout(tick,350)}tick()}catch(err){notice('Kamera konnte nicht geöffnet werden: '+err.message)}}
 function stopScan(){if(scanStream){scanStream.getTracks().forEach(t=>t.stop());scanStream=null}}
 document.getElementById('dialog').addEventListener('close',stopScan);
-function api(path,options={}){if(!config.url||!config.key)throw Error('Bitte zuerst Supabase-Projekt-URL und Publishable Key speichern.');return fetch(config.url+path,{...options,headers:{apikey:config.key,'Content-Type':'application/json',...(session?{Authorization:'Bearer '+session.access_token}:{}),...(options.headers||{})}}).then(async r=>{let t=await r.text(),d=t?JSON.parse(t):null;if(!r.ok)throw Error(d?.msg||d?.message||d?.error_description||'Cloud-Fehler '+r.status);return d})}
-async function authenticate(email,password,mode){if(mode==='signup'){await api('/auth/v1/signup',{method:'POST',body:JSON.stringify({email,password})});notice('Konto angelegt. Falls E-Mail-Bestätigung aktiv ist, bitte die E-Mail bestätigen und danach anmelden.');return}session=await api('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});sessionStorage.setItem('wp-session',JSON.stringify(session));render();notice('Angemeldet. Wähle „Cloud-Daten laden“ oder „Lokale Daten hochladen“.')}
-async function cloudPull(){try{let rows=await api('/rest/v1/user_documents?select=content&limit=1');if(!rows.length)return notice('In der Cloud sind noch keine Daten. Nutze „Lokale Daten hochladen“.');if(!confirm('Lokale Daten mit dem Cloud-Stand überschreiben?'))return;db={...blank(),...rows[0].content};save();document.getElementById('syncState').textContent='Cloud geladen';notice('Cloud-Daten geladen.')}catch(e){notice(e.message)}}
-async function cloudPush(){try{if(!confirm('Cloud-Daten mit dem aktuellen lokalen Stand überschreiben?'))return;await api('/rest/v1/user_documents?on_conflict=user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({user_id:session.user.id,content:db,updated_at:new Date().toISOString()})});document.getElementById('syncState').textContent='Cloud gespeichert';notice('Cloud-Daten gespeichert. Auf anderen Geräten bitte „Cloud-Daten laden“ wählen.')}catch(e){notice(e.message)}}
-try{session=JSON.parse(sessionStorage.getItem('wp-session')||'null')}catch{};
+
+function inviteFromUrl(){
+  const match=location.hash.match(/(?:^#|&)invite=([a-f0-9-]{36})(?:&|$)/i);
+  return match?match[1]:null;
+}
+function clearInvite(){
+  if(inviteFromUrl())history.replaceState(null,'',location.pathname+location.search);
+}
+async function api(path,options={}){
+  if(session?.refresh_token&&session.expires_at&&session.expires_at<=Date.now()/1000+90
+      &&!path.startsWith('/auth/v1/')){
+    const response=await fetch(CLOUD_URL+'/auth/v1/token?grant_type=refresh_token',{
+      method:'POST',headers:{apikey:CLOUD_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({refresh_token:session.refresh_token})
+    });
+    if(!response.ok)throw Error('Anmeldung abgelaufen. Bitte unter Einstellungen erneut anmelden.');
+    session=await response.json();
+    sessionStorage.setItem('wp-session',JSON.stringify(session));
+  }
+  const response=await fetch(CLOUD_URL+path,{
+    ...options,
+    headers:{apikey:CLOUD_KEY,'Content-Type':'application/json',
+      ...(session?{Authorization:'Bearer '+session.access_token}:{}),
+      ...(options.headers||{})}
+  });
+  const txt=await response.text();
+  let value=null;
+  if(txt){try{value=JSON.parse(txt)}catch{value=txt}}
+  if(!response.ok)throw Error(value?.message||value?.msg||value?.error_description||value?.error||'Cloud-Fehler '+response.status);
+  return value;
+}
+async function authenticate(email,password,mode){
+  if(mode==='signup'){
+    const signup=await api('/auth/v1/signup',{method:'POST',body:JSON.stringify({email,password})});
+    if(signup?.access_token){
+      session=signup;
+      sessionStorage.setItem('wp-session',JSON.stringify(session));
+      await loadShared(false);
+      render();
+      notice('Konto angelegt und angemeldet.');
+    }else notice('Konto angelegt. Bitte die Bestätigungs-E-Mail öffnen und danach hier anmelden.');
+    return;
+  }
+  session=await api('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});
+  sessionStorage.setItem('wp-session',JSON.stringify(session));
+  await loadShared(false);
+  render();
+  notice('Angemeldet. Du kannst jetzt die gemeinsame Burgpraxis verwenden.');
+}
+async function sharedDocument(){
+  if(!session)return null;
+  const records=await api('/rest/v1/bp_shared_documents?select=owner_id,content,revision,updated_at&limit=1');
+  return records?.[0]||null;
+}
+async function loadShared(manual=false){
+  if(!session||shareBusy)return;
+  try{
+    const remote=await sharedDocument();
+    if(!remote){
+      if(manual)notice('Noch keine gemeinsame Burgpraxis vorhanden.');
+      return;
+    }
+    const initial=!shared||String(shared.ownerId)!==String(remote.owner_id);
+    const newer=!initial&&Number(remote.revision)>Number(shared.revision);
+    if(shareDirty||shareConflict){
+      if(manual)notice('Deine Änderungen sind noch nicht synchronisiert. Bitte erst eine JSON-Sicherung erstellen.');
+      return;
+    }
+    if(initial||newer){
+      const localHasProducts=db.products.length>0;
+      const different=JSON.stringify(db)!==JSON.stringify({...blank(),...remote.content});
+      if(localHasProducts&&different&&initial&&!confirm('Gemeinsame Artikel aus der Cloud laden? Deine lokalen Artikel bleiben nur erhalten, wenn du vorher eine JSON-Sicherung erstellt hast.')){
+        return;
+      }
+      db={...blank(),...remote.content};
+      localStorage.setItem(KEY,JSON.stringify(db));
+    }
+    shared={ownerId:remote.owner_id,revision:Number(remote.revision)};
+    shareDirty=false;
+    shareConflict=false;
+    document.getElementById('syncState').textContent='Gemeinsam gespeichert';
+    render();
+    if(manual)notice('Gemeinsamer Stand geladen.');
+  }catch(error){
+    if(manual)notice('Laden fehlgeschlagen: '+error.message);
+  }
+}
+async function startShared(){
+  if(!session)return notice('Bitte zuerst anmelden.');
+  if(!db.products.length)return notice('Du hast auf diesem Gerät noch keine Artikel. Bitte zuerst die richtige Burgpraxis mit deinen Artikeln öffnen.');
+  if(shareStarting)return;
+  if(!confirm('Deine '+db.products.length+' vorhandenen Artikel jetzt in die gemeinsame Burgpraxis kopieren? Deine lokalen Daten bleiben erhalten.'))return;
+  shareStarting=true;
+  try{
+    const result=await api('/rest/v1/rpc/bp_start',{method:'POST',body:JSON.stringify({p_content:db})});
+    if(result?.created){
+      shared={ownerId:result.owner_id,revision:1};
+      shareDirty=false;
+      shareConflict=false;
+      document.getElementById('syncState').textContent='Gemeinsam gespeichert';
+      render();
+      notice('Deine '+db.products.length+' Artikel sind in der gemeinsamen Burgpraxis. Jetzt kannst du deinen Partner einladen!');
+    }else{
+      notice('Es gibt bereits eine gemeinsame Burgpraxis. Wir überschreiben nichts. Bitte den vorhandenen Stand laden.');
+      await loadShared(false);
+    }
+  }catch(e){notice('Gemeinsamer Start fehlgeschlagen: '+e.message)}
+  finally{shareStarting=false}
+}
+async function createInvite(){
+  if(!session||!shared||shared.ownerId!==session.user?.id)return notice('Bitte zuerst die gemeinsame Burgpraxis starten.');
+  try{
+    const result=await api('/rest/v1/rpc/bp_make_invite',{method:'POST',body:'{}'});
+    const link=location.origin+location.pathname+'#invite='+encodeURIComponent(result.code);
+    if(navigator.clipboard?.writeText){
+      await navigator.clipboard.writeText(link);
+      notice('Einladungslink kopiert! Schicke ihn deinem Partner. Der Link gilt 7 Tage und kann nur einmal verwendet werden.');
+    }else{
+      modal('<h2>Link für deinen Partner</h2><p>Bitte diesen Link kopieren:</p><textarea readonly rows="4">'+esc(link)+'</textarea><p class="muted">Der Link gilt 7 Tage und kann einmal verwendet werden.</p>');
+    }
+  }catch(e){notice('Einladung fehlgeschlagen: '+e.message)}
+}
+async function joinShared(){
+  const code=inviteFromUrl();
+  if(!code)return notice('Bitte zuerst den Einladungslink öffnen.');
+  if(!session)return notice('Bitte unter Einstellungen anmelden oder ein Konto erstellen.');
+  try{
+    await api('/rest/v1/rpc/bp_join',{method:'POST',body:JSON.stringify({p_code:code})});
+    clearInvite();
+    await loadShared(false);
+    notice('Du bist jetzt mit der gemeinsamen Burgpraxis verbunden.');
+  }catch(e){notice('Einladung konnte nicht angenommen werden: '+e.message)}
+}
+async function flushShared(){
+  if(shareBusy||!shared||!shareDirty||shareConflict||!session)return;
+  shareBusy=true;
+  try{
+    const snapshot=JSON.stringify(db);
+    const result=await api('/rest/v1/rpc/bp_save',{
+      method:'POST',
+      body:JSON.stringify({p_owner_id:shared.ownerId,p_revision:shared.revision,p_content:JSON.parse(snapshot)})
+    });
+    if(!result?.ok){
+      shareConflict=true;
+      document.getElementById('syncState').textContent='Konflikt · lokal erhalten';
+      notice('Die andere Person hat ebenfalls etwas geändert. Deine Änderungen bleiben auf diesem Handy. Bitte unter Einstellungen zuerst eine JSON-Sicherung erstellen.');
+    }else{
+      shared.revision=Number(result.revision);
+      shareDirty=JSON.stringify(db)!==snapshot;
+      document.getElementById('syncState').textContent=shareDirty?'Gemeinsam · Speichern …':'Gemeinsam gespeichert';
+    }
+  }catch(e){
+    document.getElementById('syncState').textContent='Offline · lokal gespeichert';
+  }finally{
+    shareBusy=false;
+    if(shared&&shareDirty&&!shareConflict&&document.getElementById('syncState').textContent!=='Offline · lokal gespeichert'){
+      void flushShared();
+    }
+  }
+}
+async function checkSharedUpdates(){
+  if(!session||!shared)return;
+  if(shareDirty){
+    if(!shareBusy&&!shareConflict)await flushShared();
+    return;
+  }
+  if(shareBusy||shareConflict)return;
+  try{await loadShared(false)}catch{}
+}
+// Auch beim Wechsel zwischen Geräten bleiben lokale Daten erhalten.
+async function initCloud(){
+  if(!session)return;
+  try{await loadShared(false)}catch{}
+}
+try{session=JSON.parse(sessionStorage.getItem('wp-session')||'null')}catch{}
 if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+setInterval(()=>{if(!document.hidden)void checkSharedUpdates()},12000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)void checkSharedUpdates()});
+window.addEventListener('online',()=>{void checkSharedUpdates()});
+void initCloud();
+
 render();
