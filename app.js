@@ -349,11 +349,14 @@ async function createInvite(){
   try{
     const result=await api('/rest/v1/rpc/bp_make_invite',{method:'POST',body:'{}'});
     const link=location.origin+location.pathname+'#invite='+encodeURIComponent(result.code);
+    let copied=false;
     if(navigator.clipboard?.writeText){
-      await navigator.clipboard.writeText(link);
+      try{await navigator.clipboard.writeText(link);copied=true}catch{}
+    }
+    if(copied){
       notice('Einladungslink kopiert! Schicke ihn deinem Partner. Der Link gilt 7 Tage und kann nur einmal verwendet werden.');
     }else{
-      modal('<h2>Link für deinen Partner</h2><p>Bitte diesen Link kopieren:</p><textarea readonly rows="4">'+esc(link)+'</textarea><p class="muted">Der Link gilt 7 Tage und kann einmal verwendet werden.</p>');
+      modal('<h2>Link für deinen Partner</h2><p>Bitte diesen Link kopieren und deinem Partner schicken:</p><textarea readonly rows="4">'+esc(link)+'</textarea><p class="muted">Der Link gilt 7 Tage und kann nur einmal verwendet werden.</p>');
     }
   }catch(e){notice('Einladung fehlgeschlagen: '+e.message)}
 }
